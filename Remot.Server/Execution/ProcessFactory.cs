@@ -8,17 +8,20 @@ public sealed class ProcessFactory : IProcessFactory
     public IProcessAdapter Start(CommandSpec spec)
     {
         var psi = BuildStartInfo(spec);
+        var p = new Process { StartInfo = psi };
         try
         {
-            var p = new Process { StartInfo = psi };
             p.Start();
             JobObject? job = null;
             try { job = new JobObject(); if (!job.Assign(p.Handle)) job = null; }
             catch { /* 无权限降级:KillEntireTree 回退到 entireProcessTree */ job = null; }
-            return ProcessAdapter.Create(p, job);
+            return ProcessAdapter.Create(p, job);   // 成功:所有权转移给 ProcessAdapter
         }
         catch (Exception ex)
         {
+            // 启动后若异常,清理已启动的进程,避免孤儿。
+            try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+            p.Dispose();
             throw new ProcessStartException(spec.Shell, ex);
         }
     }
@@ -27,9 +30,10 @@ public sealed class ProcessFactory : IProcessFactory
     {
         var (fileName, args) = spec.Shell.ToLowerInvariant() switch
         {
-            "cmd"       => ("cmd.exe", "/S /C " + Quote(spec.Text)),
-            "powershell" => ("powershell.exe", "-NoProfile -NonInteractive -Command " + Quote(spec.Text)),
-            _           => ("pwsh.exe", "-NoProfile -NonInteractive -Command " + Quote(spec.Text)),
+            // 前置把控制台输出切到 UTF-8,否则中文 Windows 下子进程默认 GBK 会乱码。
+            "cmd"        => ("cmd.exe", "/S /C " + Quote("chcp 65001 >nul && " + spec.Text)),
+            "powershell" => ("powershell.exe", "-NoProfile -NonInteractive -Command " + Quote("[Console]::OutputEncoding=[Text.Encoding]::UTF8; " + spec.Text)),
+            _            => ("pwsh.exe", "-NoProfile -NonInteractive -Command " + Quote("[Console]::OutputEncoding=[Text.Encoding]::UTF8; " + spec.Text)),
         };
 
         var psi = new ProcessStartInfo(fileName, args)

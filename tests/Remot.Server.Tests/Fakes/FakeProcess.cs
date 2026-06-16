@@ -24,7 +24,14 @@ internal sealed class FakeProcess : IProcessAdapter
 
     public void EmitStdout(string line) => OutputDataReceived?.Invoke(this, Args(line));
     public void EmitStderr(string line) => ErrorDataReceived?.Invoke(this, Args(line));
-    public void Complete() { if (!NeverExits) _done.TrySetResult(); }
+    public void Complete()
+    {
+        if (NeverExits) return;
+        // 发出 EOF(null),让 CommandRunner 的排空逻辑确定性地完成(模拟 .NET 真实行为)。
+        OutputDataReceived?.Invoke(this, Args(null!));
+        ErrorDataReceived?.Invoke(this, Args(null!));
+        _done.TrySetResult();
+    }
 
     public void BeginOutputRead() { }
     public void BeginErrorRead() { }
@@ -41,7 +48,14 @@ internal sealed class FakeProcess : IProcessAdapter
         // ct 取消 → OperationCanceledException 自然向上抛
     }
 
-    public void KillEntireTree() { TreeKilled = true; HasExited = true; _done.TrySetResult(); }
+    public void KillEntireTree()
+    {
+        TreeKilled = true; HasExited = true;
+        // 杀树后管道关闭,真实 .NET 会送出 EOF(null);模拟之,使排空逻辑即时完成。
+        OutputDataReceived?.Invoke(this, Args(null!));
+        ErrorDataReceived?.Invoke(this, Args(null!));
+        _done.TrySetResult();
+    }
     public void Dispose() { }
 
     // DataReceivedEventArgs 无公开构造,用反射造一个。

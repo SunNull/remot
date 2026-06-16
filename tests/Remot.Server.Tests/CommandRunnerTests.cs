@@ -64,4 +64,19 @@ public class CommandRunnerTests
         Assert.True(r.Stdout.Length < 100);
         Assert.Contains("truncated", r.Stdout, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public async Task External_cancel_kills_process_tree_without_timing_out()
+    {
+        var fake = new FakeFactory { Process = { NeverExits = true } };
+        var runner = new CommandRunner(fake);
+        using var cts = new CancellationTokenSource();
+
+        var t = runner.RunAsync(new CommandSpec("long"), cts.Token);
+        cts.CancelAfter(50);   // 50ms 后外部取消
+        var r = await t;
+
+        Assert.True(fake.Process.TreeKilled);   // 取消也要杀树,不留孤儿
+        Assert.False(r.TimedOut);               // 取消不是超时
+    }
 }

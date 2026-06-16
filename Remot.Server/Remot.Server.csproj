@@ -14,4 +14,9 @@
     <ProjectReference Include="..\Remot.Protocol\Remot.Protocol.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Remot.Server.Tests" />
+    <InternalsVisibleTo Include="Remot.IntegrationTests" />
+  </ItemGroup>
+
 </Project>

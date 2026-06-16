@@ -21,7 +21,7 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
         {
             var spec = new CommandSpec(
                 Text: request.Commands[i].Text,
-                Shell: string.IsNullOrEmpty(request.Shell) ? "pwsh" : request.Shell,
+                Shell: string.IsNullOrEmpty(request.Shell) ? "powershell" : request.Shell,
                 Cwd: string.IsNullOrEmpty(request.Cwd) ? null : request.Cwd,
                 Env: request.Env,
                 TimeoutMs: request.TimeoutMs > 0 ? request.TimeoutMs : null,

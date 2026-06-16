@@ -14,7 +14,7 @@ public sealed class RunCommandTool
     public async Task<string> remot_run(
         [Description("目标名")] string target,
         [Description("命令数组")] string[] commands,
-        [Description("shell: pwsh/powershell/cmd")] string shell = "pwsh",
+        [Description("shell: powershell/pwsh/cmd")] string shell = "powershell",
         int? timeout_ms = null)
     {
         var r = await _client.RunCommandAsync(target, commands, shell, timeout_ms);

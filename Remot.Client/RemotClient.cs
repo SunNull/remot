@@ -22,7 +22,7 @@ public sealed class RemotClient : IDisposable
     public IReadOnlyList<string> TargetNames => _config.Targets.Keys.ToList();
 
     public async Task<RemotResult<IReadOnlyList<CommandResult>>> RunCommandAsync(
-        string target, IReadOnlyList<string> commands, string shell = "pwsh", int? timeoutMs = null, CancellationToken ct = default)
+        string target, IReadOnlyList<string> commands, string shell = "powershell", int? timeoutMs = null, CancellationToken ct = default)
     {
         var t = _config.Get(target);
         if (t is null) return RemotResult<IReadOnlyList<CommandResult>>.Fail($"未知目标:{target}");

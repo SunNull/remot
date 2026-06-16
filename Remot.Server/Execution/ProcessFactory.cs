@@ -13,8 +13,8 @@ public sealed class ProcessFactory : IProcessFactory
             var p = new Process { StartInfo = psi };
             p.Start();
             JobObject? job = null;
-            try { job = new JobObject(); job.Assign(p.Handle); }
-            catch { /* 无权限降级:KillEntireTree 回退到 entireProcessTree */ }
+            try { job = new JobObject(); if (!job.Assign(p.Handle)) job = null; }
+            catch { /* 无权限降级:KillEntireTree 回退到 entireProcessTree */ job = null; }
             return ProcessAdapter.Create(p, job);
         }
         catch (Exception ex)

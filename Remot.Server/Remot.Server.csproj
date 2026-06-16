@@ -8,6 +8,9 @@
 
   <ItemGroup>
     <PackageReference Include="Grpc.AspNetCore" Version="2.64.0" />
+    <!-- 以 Windows 服务方式常驻需要此包(提供 AddWindowsService)。
+         当前环境 NuGet HTTPS 不通,暂未引入;控制台模式下构建/测试/E2E 均可。
+         网络恢复后执行:dotnet add Remot.Server package Microsoft.Extensions.Hosting.WindowsServices -->
   </ItemGroup>
 
   <ItemGroup>

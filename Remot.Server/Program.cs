@@ -33,8 +33,7 @@ if (args.Length > 0)
 var cfg = File.Exists(cfgPath) ? ServerConfig.Load(cfgPath) : Bootstrap(cfgPath);
 
 var builder = WebApplication.CreateBuilder(args);
-// 服务常驻:网络恢复后引入 Microsoft.Extensions.Hosting.WindowsServices 并启用下面这行:
-// builder.Services.AddWindowsService(o => o.ServiceName = ServiceInstaller.ServiceName);
+builder.Services.AddWindowsService(o => o.ServiceName = ServiceInstaller.ServiceName);
 builder.Services.AddGrpc(options => options.Interceptors.Add<TokenInterceptor>());
 builder.Services.AddSingleton<TokenInterceptor>(_ => new TokenInterceptor(cfg.Token));
 builder.Services.AddSingleton<ICommandRunner, CommandRunner>();

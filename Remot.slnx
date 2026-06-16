@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/Remot.Client.Tests/Remot.Client.Tests.csproj" />
+    <Project Path="tests/Remot.IntegrationTests/Remot.IntegrationTests.csproj" />
+    <Project Path="tests/Remot.Server.Tests/Remot.Server.Tests.csproj" />
+  </Folder>
+  <Project Path="Remot.Cli/Remot.Cli.csproj" />
+  <Project Path="Remot.Client/Remot.Client.csproj" />
+  <Project Path="Remot.Mcp/Remot.Mcp.csproj" />
+  <Project Path="Remot.Protocol/Remot.Protocol.csproj" />
+  <Project Path="Remot.Server/Remot.Server.csproj" />
+</Solution>

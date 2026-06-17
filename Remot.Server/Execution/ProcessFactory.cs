@@ -16,6 +16,9 @@ public sealed class ProcessFactory : IProcessFactory
         {
             p.Start();
             p.StandardInput.Close();   // H2:立即关闭 stdin,避免会读 stdin 的命令(cmd /C more、python 交互等)永久挂起
+            // L3 说明:Start 与 Assign 间存在极小竞态窗口(理论上孙进程可能在挂入 job 前逃逸)。
+            // 完整修复需 CREATE_SUSPENDED + P/Invoke CreateProcess,代价大;当前「启动后立即挂入 job」
+            // + KillEntireTree 的 entireProcessTree 回退已把实际风险降到极低,按权衡保留该残余。
             JobObject? job = null;
             var jo = new JobObject();
             try

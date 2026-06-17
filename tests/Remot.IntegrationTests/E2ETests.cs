@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Remot.Client;
 using Remot.Client.Config;
+using Remot.Protocol;
 using Remot.Server.Execution;
 using Remot.Server.Files;
 using Remot.Server.Security;

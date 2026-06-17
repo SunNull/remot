@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Remot.Protocol;
 using Remot.Server;
 using Remot.Server.Config;
 using Remot.Server.Execution;

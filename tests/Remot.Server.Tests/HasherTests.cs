@@ -1,4 +1,4 @@
-using Remot.Server.Files;
+using Remot.Protocol;
 using Xunit;
 
 namespace Remot.Server.Tests;

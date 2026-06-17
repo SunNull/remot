@@ -25,6 +25,10 @@ public sealed class RemotClient : IDisposable
 
     public IReadOnlyList<string> TargetNames => _config.Targets.Keys.ToList();
 
+    /// <summary>列出所有目标的 名称/地址/端口。</summary>
+    public IReadOnlyList<(string Name, string Host, int Port)> ListTargets() =>
+        _config.Targets.Select(kv => (kv.Key, kv.Value.Host, kv.Value.Port)).ToList();
+
     /// <summary>供 CLI 的 ping/pair-自检直接用。</summary>
     public Grpc.Net.Client.GrpcChannel GetChannel(Target t) => _channels.Get(t);
 

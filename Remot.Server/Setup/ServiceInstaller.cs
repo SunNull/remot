@@ -11,7 +11,14 @@ public static class ServiceInstaller
     public static void Install(string exePath, int port)
     {
         if (Run("sc.exe", $"create {ServiceName} binPath= \"{exePath}\" start= auto") != 0)
-            throw new Exception("sc create 失败(服务可能已存在或未提权)");
+        {
+            // 服务已存在 → 停掉删除后重建(更新 binPath 指向新 exe)
+            Run("sc.exe", $"stop {ServiceName}");
+            Run("sc.exe", $"delete {ServiceName}");
+            System.Threading.Thread.Sleep(500);
+            if (Run("sc.exe", $"create {ServiceName} binPath= \"{exePath}\" start= auto") != 0)
+                throw new Exception("sc create 失败(请检查是否管理员/服务名冲突)");
+        }
         Run("sc.exe", $"description {ServiceName} \"Remot 远程执行与文件传输服务\"");
         Run("sc.exe", $"failure {ServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/30000");
         if (Run("netsh", $"advfirewall firewall add rule name=\"RemotServer\" dir=in action=allow protocol=TCP localport={port}") != 0)

@@ -96,4 +96,22 @@ public class E2ETests : IAsyncLifetime
         Assert.Contains("one", r.Value[0].Stdout);
         Assert.Contains("two", r.Value[1].Stdout);
     }
+
+    [Fact]
+    public async Task Download_round_trips_with_integrity()   // H4:下载完整性 + 覆盖零测试缺口
+    {
+        var src = Path.GetTempFileName();
+        await File.WriteAllTextAsync(src, "download-me 中文");
+        var dst = Path.Combine(Path.GetTempPath(), "remot-e2e-dl-" + Guid.NewGuid() + ".txt");
+        await Client.UploadAsync("e2e", new[] { (src, dst) });
+
+        var local = Path.Combine(Path.GetTempPath(), "remot-e2e-local-" + Guid.NewGuid() + ".txt");
+        var r = await Client.DownloadAsync("e2e", dst, local);
+        Assert.True(r.Ok, r.Error ?? "(no error msg)");
+        Assert.Equal("download-me 中文", await File.ReadAllTextAsync(local));
+
+        File.Delete(src);
+        if (File.Exists(dst)) File.Delete(dst);
+        if (File.Exists(local)) File.Delete(local);
+    }
 }

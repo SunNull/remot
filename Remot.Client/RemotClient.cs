@@ -26,14 +26,15 @@ public sealed class RemotClient : IDisposable
     public IReadOnlyList<string> TargetNames => _config.Targets.Keys.ToList();
 
     public async Task<RemotResult<IReadOnlyList<CommandResult>>> RunCommandAsync(
-        string target, IReadOnlyList<string> commands, string shell = "powershell", int? timeoutMs = null, CancellationToken ct = default)
+        string target, IReadOnlyList<string> commands, string shell = "powershell", int? timeoutMs = null,
+        string? cwd = null, CancellationToken ct = default)
     {
         var t = _config.Get(target);
         if (t is null) return RemotResult<IReadOnlyList<CommandResult>>.Fail($"未知目标:{target}");
         try
         {
             var stub = new RemotService.RemotServiceClient(_channels.Get(t));
-            var req = new CommandRequest { Shell = shell, TimeoutMs = timeoutMs ?? 0 };
+            var req = new CommandRequest { Shell = shell, TimeoutMs = timeoutMs ?? 0, Cwd = cwd ?? "" };
             req.Commands.AddRange(commands.Select(c => new Command { Text = c }));
             using var call = stub.RunCommand(req, headers: Auth(t), cancellationToken: ct);
             var results = new List<CommandResult>();

@@ -2,31 +2,41 @@ using Remot.Client;
 using Remot.Client.Config;
 using Remot.Client.Pairing;
 
-return RunSafely(args);
-
-static int RunSafely(string[] args)
+// M9:支持 Ctrl+C 取消 + --deadline 超时
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+for (int i = 0; i < args.Length; i++)
 {
-    try { return Run(args); }
-    catch (Exception ex) { Console.Error.WriteLine($"错误: {ex.Message}"); return 1; }   // H7:顶层兜底,不抛堆栈
+    if (args[i] == "--deadline" && i + 1 < args.Length && int.TryParse(args[i + 1], out var sec) && sec > 0)
+        cts.CancelAfter(TimeSpan.FromSeconds(sec));
+}
+return await RunSafely(args, cts.Token);
+
+static async Task<int> RunSafely(string[] args, CancellationToken ct)
+{
+    try { return await Run(args, ct); }
+    catch (OperationCanceledException) { Console.Error.WriteLine("已取消"); return 130; }
+    catch (Exception ex) { Console.Error.WriteLine($"错误: {ex.Message}"); return 1; }   // H7:顶层兜底
 }
 
-static int Run(string[] args)
+static async Task<int> Run(string[] args, CancellationToken ct)
 {
     string configPath = DefaultConfigPath();
     var cmd = new List<string>();
     for (int i = 0; i < args.Length; i++)
     {
         if (args[i] == "--config" && i + 1 < args.Length) { configPath = args[++i]; continue; }
+        if (args[i] == "--deadline") { if (i + 1 < args.Length) i++; continue; }   // 已在顶层处理,这里跳过值
         cmd.Add(args[i]);
     }
     if (cmd.Count == 0) return PrintHelp();
 
     return cmd[0].ToLowerInvariant() switch
     {
-        "pair" => Pair(configPath, cmd.Skip(1).ToArray()),
-        "run" => RunCmd(configPath, cmd.Skip(1).ToArray()),
-        "upload" => Upload(configPath, cmd.Skip(1).ToArray()),
-        "download" => Download(configPath, cmd.Skip(1).ToArray()),
+        "pair" => await Pair(configPath, cmd.Skip(1).ToArray()),
+        "run" => await RunCmd(configPath, cmd.Skip(1).ToArray(), ct),
+        "upload" => await Upload(configPath, cmd.Skip(1).ToArray(), ct),
+        "download" => await Download(configPath, cmd.Skip(1).ToArray(), ct),
         "target" => TargetCmd(configPath, cmd.Skip(1).ToArray()),
         "help" or "-h" or "--help" => PrintHelp(),
         _ => Unknown(cmd[0])
@@ -36,7 +46,7 @@ static int Run(string[] args)
 static string DefaultConfigPath() =>
     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".remot", "targets.json");
 
-static int Pair(string cfg, string[] a)
+static Task<int> Pair(string cfg, string[] a)
 {
     string? name = null, host = null, pairing = null;
     for (int i = 0; i < a.Length; i++)
@@ -45,22 +55,22 @@ static int Pair(string cfg, string[] a)
         else if (a[i] == "--host" && i + 1 < a.Length) host = a[++i];
         else pairing = a[i];
     }
-    if (pairing is null) { Console.Error.WriteLine("用法:remot pair [--name X] [--host H] <配对串>"); return 1; }
+    if (pairing is null) { Console.Error.WriteLine("用法:remot pair [--name X] [--host H] <配对串>"); return Task.FromResult(1); }
     var p = PairingString.Decode(pairing);
     var h = string.IsNullOrEmpty(host) ? p.Host : host;
     var t = new Target(name ?? $"target-{h}", h, p.Port, p.Token, p.Fingerprint);
     using var c = new RemotClient(cfg); c.SaveTarget(t);
     Console.WriteLine($"已登记目标 {t.Name} → {t.Host}:{t.Port}");
-    return 0;
+    return Task.FromResult(0);
 }
 
-static int RunCmd(string cfg, string[] a)
+static async Task<int> RunCmd(string cfg, string[] a, CancellationToken ct)
 {
     var (target, shell, rest) = ExtractOpts(a);
     if (target is null || rest.Count == 0)
     { Console.Error.WriteLine("用法:remot run -t <目标> [--shell pwsh|powershell|cmd] <命令...>"); return 1; }
     using var c = new RemotClient(cfg);
-    var r = c.RunCommandAsync(target, rest, shell).GetAwaiter().GetResult();
+    var r = await c.RunCommandAsync(target, rest, shell, ct: ct);
     if (!r.Ok) { Console.Error.WriteLine(r.Error); return 1; }
     int rc = 0;
     foreach (var res in r.Value!)
@@ -74,7 +84,7 @@ static int RunCmd(string cfg, string[] a)
     return rc;
 }
 
-static int Upload(string cfg, string[] a)
+static async Task<int> Upload(string cfg, string[] a, CancellationToken ct)
 {
     var (target, _, rest) = ExtractOpts(a);
     if (target is null) { Console.Error.WriteLine("用法:remot upload -t <目标> <src dst [src dst ...]>"); return 1; }
@@ -82,19 +92,19 @@ static int Upload(string cfg, string[] a)
     var pairs = new List<(string, string)>();
     for (int i = 0; i + 1 < rest.Count; i += 2) pairs.Add((rest[i], rest[i + 1]));
     using var c = new RemotClient(cfg);
-    var r = c.UploadAsync(target, pairs).GetAwaiter().GetResult();
+    var r = await c.UploadAsync(target, pairs, ct);
     if (!r.Ok) { Console.Error.WriteLine(r.Error); return 1; }
     int rc = 0;
-    foreach (var x in r.Value!) { Console.WriteLine($"{x.Dest}: {(x.Ok ? "OK" : x.Error)} ({x.Bytes}B)"); if (!x.Ok) rc = 2; }   // M8:部分失败反映到退出码
+    foreach (var x in r.Value!) { Console.WriteLine($"{x.Dest}: {(x.Ok ? "OK" : x.Error)} ({x.Bytes}B)"); if (!x.Ok) rc = 2; }
     return rc;
 }
 
-static int Download(string cfg, string[] a)
+static async Task<int> Download(string cfg, string[] a, CancellationToken ct)
 {
     var (target, _, rest) = ExtractOpts(a);
     if (target is null || rest.Count < 2) { Console.Error.WriteLine("用法:remot download -t <目标> <远程> <本地>"); return 1; }
     using var c = new RemotClient(cfg);
-    var r = c.DownloadAsync(target, rest[0], rest[1]).GetAwaiter().GetResult();
+    var r = await c.DownloadAsync(target, rest[0], rest[1], ct);
     if (!r.Ok) { Console.Error.WriteLine(r.Error); return 1; }
     Console.WriteLine($"已下载 → {rest[1]}");
     return 0;
@@ -125,10 +135,10 @@ static int PrintHelp()
 {
     Console.WriteLine("Remot — 远程执行 + 文件传输");
     Console.WriteLine("  remot pair [--name X] [--host H] <配对串>");
-    Console.WriteLine("  remot run -t <目标> [--shell pwsh|powershell|cmd] <命令...>");
+    Console.WriteLine("  remot run -t <目标> [--shell pwsh|powershell|cmd] [--deadline <秒>] <命令...>");
     Console.WriteLine("  remot upload -t <目标> <src dst [src dst ...]>");
     Console.WriteLine("  remot download -t <目标> <远程> <本地>");
     Console.WriteLine("  remot target list");
-    Console.WriteLine("  [--config <路径>] 指定 targets.json");
+    Console.WriteLine("  [--config <路径>] [--deadline <秒>]   Ctrl+C 可取消");
     return 0;
 }

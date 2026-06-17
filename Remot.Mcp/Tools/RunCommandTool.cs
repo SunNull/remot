@@ -15,9 +15,10 @@ public sealed class RunCommandTool
         [Description("目标名")] string target,
         [Description("命令数组")] string[] commands,
         [Description("shell: powershell/pwsh/cmd")] string shell = "powershell",
-        int? timeout_ms = null)
+        int? timeout_ms = null,
+        [Description("工作目录,可选")] string? cwd = null)
     {
-        var r = await _client.RunCommandAsync(target, commands, shell, timeout_ms);
+        var r = await _client.RunCommandAsync(target, commands, shell, timeout_ms, cwd);
         if (!r.Ok) return $"ERROR: {r.Error}";
         return string.Join("\n", r.Value!.Select(x =>
             $"[{x.Index}] exit={x.ExitCode}{(x.TimedOut ? " TIMEOUT" : "")}\n{x.Stdout}\n--- stderr ---\n{x.Stderr}"));

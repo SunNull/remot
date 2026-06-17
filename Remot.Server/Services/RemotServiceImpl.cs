@@ -1,5 +1,6 @@
 using Grpc.Core;
 using Remot.Protocol;
+using Remot.Server;
 using Remot.Server.Execution;
 using Remot.Server.Files;
 using System.Runtime.CompilerServices;
@@ -23,6 +24,11 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
         var shell = string.IsNullOrEmpty(request.Shell) ? "powershell" : request.Shell;
         if (!AllowedShells.Contains(shell))   // H9:白名单
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"不支持的 shell: {shell}"));
+
+        // M10:审计(谁、跑了什么)
+        var summary = string.Join(" | ", request.Commands.Select(c => c.Text));
+        if (summary.Length > 200) summary = summary[..200] + "...";
+        AuditLog.Log($"run peer={context.Peer} shell={shell}: {summary}");
 
         for (int i = 0; i < request.Commands.Count; i++)
         {

@@ -27,6 +27,22 @@ if (args.Length > 0)
                 ServiceInstaller.Install(Environment.ProcessPath!, c.Port);
                 return 0;
             }
+        case "rotate-token":
+            {
+                // C6 缓解:一键轮换 token(证书不变),作废所有旧客户端;合法客户端重 pair 即可
+                var c = ServerConfig.Load(cfgPath);
+                c.EnsureValid();
+                c.Token = ServerConfig.NewToken();
+                c.Save(cfgPath);
+                using var cert = X509CertificateLoader.LoadPkcs12(
+                    File.ReadAllBytes(c.CertPath), c.CertPassword, X509KeyStorageFlags.Exportable);
+                var fp = cert.GetCertHashString(HashAlgorithmName.SHA256).ToLowerInvariant();
+                var ps = PairingPayload.Encode(LocalLanIp() ?? Environment.MachineName, c.Port, c.Token, fp);
+                AuditLog.SavePairing(ps);
+                Console.WriteLine("Token 已轮换 —— 所有旧客户端需重新 pair。新配对串(已写入 pairing.txt):");
+                Console.WriteLine(ps);
+                return 0;
+            }
         case "uninstall": ServiceInstaller.Uninstall(); return 0;
         case "status": Console.WriteLine($"config: {cfgPath}"); return 0;
     }
@@ -38,7 +54,7 @@ cfg.EnsureValid();   // C3:空 token 直接拒绝启动(优于无认证运行)
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddWindowsService(o => o.ServiceName = ServiceInstaller.ServiceName);
 builder.Services.AddGrpc(options => options.Interceptors.Add<TokenInterceptor>());
-builder.Services.AddSingleton<TokenInterceptor>(_ => new TokenInterceptor(cfg.Token));
+builder.Services.AddSingleton<TokenInterceptor>(_ => new TokenInterceptor(cfg.Token, cfg.AllowedClientIPs));
 builder.Services.AddSingleton<ICommandRunner, CommandRunner>();
 builder.Services.AddSingleton<IProcessFactory, ProcessFactory>();
 builder.Services.AddSingleton<Hasher>();
@@ -73,7 +89,9 @@ static ServerConfig Bootstrap(string cfgPath)
     Console.WriteLine("==== Remot 服务端已初始化 ====");
     Console.WriteLine($"本机探测地址:{host}(若不对,开发机用 `remot pair --host <真实IP> \"配对串\"` 覆盖)");
     Console.WriteLine("把下面这行配对串粘到开发机执行 `remot pair`(注:配对串即凭证,用后妥善保管):");
-    Console.WriteLine(PairingPayload.Encode(host, cfg.Port, cfg.Token, fingerprint));
+    var ps = PairingPayload.Encode(host, cfg.Port, cfg.Token, fingerprint);
+    Console.WriteLine(ps);
+    AuditLog.SavePairing(ps);   // M10:服务态下配对串也落盘,可从 pairing.txt 取回
     return cfg;
 }
 

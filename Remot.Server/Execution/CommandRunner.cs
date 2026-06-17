@@ -17,15 +17,26 @@ public sealed class CommandRunner : ICommandRunner
         IProcessAdapter proc;
         try { proc = _factory.Start(spec); }
         catch (ProcessStartException ex) { return new CommandRunResult(-1, "", "", 0, false, ex.Message); }
-        using var _ = proc;   // IProcessAdapter 实现 IDisposable
+        using var _ = proc;
 
-        // EOF(null 回调)追踪两条流是否排空,避免进程退出后丢尾部输出。
         var stdoutEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stderrEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stdoutBuf = new OutputAccumulator(spec.MaxOutputBytes);
         var stderrBuf = new OutputAccumulator(spec.MaxOutputBytes);
-        proc.OutputDataReceived += (_, e) => HandleLine(e.Data, isStderr: false, stdoutBuf, stdoutEof, onLine);
-        proc.ErrorDataReceived += (_, e) => HandleLine(e.Data, isStderr: true, stderrBuf, stderrEof, onLine);
+
+        // L4:MergeStreams 时把 stderr 并入 stdout(缓冲与流式均合并)
+        void OnLine(string? line, bool isStderr)
+        {
+            if (line is null) { (isStderr ? stderrEof : stdoutEof).TrySetResult(); return; }
+            bool asStderr = isStderr && !spec.MergeStreams;
+            (asStderr ? stderrBuf : stdoutBuf).Append(line);
+            if (onLine is not null)
+            {
+                try { onLine(new StreamLine(asStderr, line)).GetAwaiter().GetResult(); } catch { }
+            }
+        }
+        proc.OutputDataReceived += (_, e) => OnLine(e.Data, isStderr: false);
+        proc.ErrorDataReceived += (_, e) => OnLine(e.Data, isStderr: true);
         proc.BeginOutputRead();
         proc.BeginErrorRead();
 
@@ -53,7 +64,6 @@ public sealed class CommandRunner : ICommandRunner
             try { await proc.WaitForExitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); } catch { }
         }
 
-        // 排空异步输出管道:进程退出后回调可能仍在路上。
         try { await Task.WhenAll(stdoutEof.Task, stderrEof.Task).WaitAsync(DrainTimeout); }
         catch { }
 
@@ -65,17 +75,6 @@ public sealed class CommandRunner : ICommandRunner
             DurationMs: sw.ElapsedMilliseconds,
             TimedOut: timedOut,
             Error: cancelled ? "cancelled" : null);
-    }
-
-    private static void HandleLine(string? line, bool isStderr, OutputAccumulator buf, TaskCompletionSource eof, Func<StreamLine, Task>? onLine)
-    {
-        if (line is null) { eof.TrySetResult(); return; }
-        buf.Append(line);
-        if (onLine is not null)
-        {
-            // H1:实时流式。reader 线程无同步上下文,GetResult 不会死锁;客户端慢则靠超时/杀树自恢复。
-            try { onLine(new StreamLine(isStderr, line)).GetAwaiter().GetResult(); } catch { }
-        }
     }
 
     private sealed class OutputAccumulator(long maxBytes)

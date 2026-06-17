@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="Grpc.Net.Client" Version="2.64.0" />
+    <!-- System.IO.FileSystem.AccessControl 类型由框架隐式提供(NU1510) -->
   </ItemGroup>
 
   <PropertyGroup>

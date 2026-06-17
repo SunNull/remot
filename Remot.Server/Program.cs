@@ -139,7 +139,7 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
             Console.WriteLine("\n══════════════════════════════════════");
             Console.WriteLine("  ✓ 安装完成!");
             Console.WriteLine("  配对串已复制到剪贴板,直接在开发机 Ctrl+V。");
-            Console.WriteLine("  开发机:双击 Remot.Cli.exe → Y → Y → Y");
+            Console.WriteLine("  开发机:双击 Remot.Mcp.exe 获取 MCP 配置模板,粘贴到 Claude Code");
             Console.WriteLine("══════════════════════════════════════");
         }
         else Console.WriteLine("\n安装可能未完成,请以管理员运行 install。");

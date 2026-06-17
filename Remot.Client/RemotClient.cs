@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using Grpc.Core;
 using Remot.Client.Channels;
 using Remot.Client.Config;
@@ -21,14 +20,9 @@ public sealed class RemotClient : IDisposable
         _config = TargetsConfig.Load(configPath);
     }
 
-    public IReadOnlyList<string> TargetNames => _config.Targets.Keys.ToList();
-
     /// <summary>列出所有目标的 名称/地址/端口。</summary>
     public IReadOnlyList<(string Name, string Host, int Port)> ListTargets() =>
         _config.Targets.Select(kv => (kv.Key, kv.Value.Host, kv.Value.Port)).ToList();
-
-    /// <summary>供 CLI 的 ping/pair-自检直接用。</summary>
-    public Grpc.Net.Client.GrpcChannel GetChannel(Target t) => _channels.Get(t);
 
     public async Task<RemotResult<IReadOnlyList<CommandResult>>> RunCommandAsync(
         string target, IReadOnlyList<string> commands, string shell = "powershell", int? timeoutMs = null,
@@ -124,10 +118,7 @@ public sealed class RemotClient : IDisposable
             {
                 string actual;
                 await using (var r = File.OpenRead(tmp))
-                {
-                    using var sha256 = SHA256.Create();
-                    actual = Convert.ToHexString(await sha256.ComputeHashAsync(r, ct)).ToLowerInvariant();
-                }
+                    actual = await new Hasher().Sha256Async(r, ct);   // SHA256 收拢到 Hasher
                 if (!actual.Equals(expectedSha, StringComparison.OrdinalIgnoreCase))
                 { TryDelete(tmp); return RemotResult<None>.Fail($"下载完整性校验失败(期望 {expectedSha}, 实际 {actual})"); }
             }

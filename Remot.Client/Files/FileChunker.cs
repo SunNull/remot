@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
 using Google.Protobuf;
 using Remot.Protocol;
 
@@ -12,9 +11,8 @@ public sealed class FileChunker(int chunkSize = 2 * 1024 * 1024)
     public async Task<(string Sha256, long Size)> HashAsync(string src, CancellationToken ct = default)
     {
         await using var fs = File.OpenRead(src);
-        using var sha = SHA256.Create();
-        var hash = await sha.ComputeHashAsync(fs, ct);
-        return (Convert.ToHexString(hash).ToLowerInvariant(), fs.Length);
+        var hash = await new Hasher().Sha256Async(fs, ct);   // SHA256 收拢到 Hasher
+        return (hash, fs.Length);
     }
 
     /// <summary>产出上传分块:先 Header(含 sha/size),再数据块(流式读,零全量缓冲)。</summary>

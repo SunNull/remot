@@ -37,9 +37,9 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
 
             // 危险命令拦截(内置黑名单 + server.json 自定义)
             var blockReason = Remot.Server.Security.CommandGuard.Check(cmdText,
+                _config.BlockedCommands.Count > 0 ? _config.BlockedCommands : null,
                 _config.ProtectedServices.Count > 0 ? _config.ProtectedServices : null,
-                _config.ProtectedPaths.Count > 0 ? _config.ProtectedPaths : null,
-                _config.BlockedCommands.Count > 0 ? _config.BlockedCommands : null);
+                _config.ProtectedPaths.Count > 0 ? _config.ProtectedPaths : null);
             if (blockReason is not null)
             {
                 AuditLog.Log($"⛔ BLOCKED: {blockReason} | cmd: {Truncate(cmdText, 100)}");

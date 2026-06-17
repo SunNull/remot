@@ -15,23 +15,17 @@ using Remot.Server.Security;
 using Remot.Server.Services;
 using Remot.Server.Setup;
 
-// ── 双击(无参)→ 向导;有参数 → 命令行模式 ──
+// ── 双击(无参)→ 自动安装/更新服务并退出;有参数 → 命令行模式 ──
 if (args.Length == 0)
 {
-    // 双击启动:有配置→正常运行(控制台模式);无配置→安装向导
     var dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Remot");
+    Directory.CreateDirectory(dataDir);
     var cfgPath = Path.Combine(dataDir, "server.json");
-    if (File.Exists(cfgPath))
-    {
-        // 已安装:控制台模式运行(非服务),按 Ctrl+C 退出
-        Console.WriteLine("Remot 服务端已配置。控制台模式启动(Ctrl+C 退出)。");
-        goto RunServer;
-    }
-    // 未安装:Y/N 向导
+    // 双击 = 安装/确保服务已注册(无论是否已有配置)
     Console.WriteLine("╔══════════════════════════════════╗");
     Console.WriteLine("║      Remot 服务端安装向导        ║");
     Console.WriteLine("╚══════════════════════════════════╝");
-    Console.Write("继续安装? (Y/n): ");
+    Console.Write("继续? (Y/n): ");
     if (!Confirm()) { Console.WriteLine("已取消。"); PauseExit(); return 0; }
     Console.Write("服务器名称(可选,回车=机器名): ");
     var nameInput = Console.ReadLine()?.Trim();
@@ -45,8 +39,8 @@ if (args.Length == 0)
     switch (args[0].ToLowerInvariant())
     {
         case "install": return DoInstall(args.Skip(1).ToArray(), cfgPath, interactive: false);
-        case "rotate-token":
-            {
+        case "run": goto RunServer;   // 调试:控制台模式运行
+        case "rotate-token": {
                 var c = ServerConfig.Load(cfgPath);
                 c.EnsureValid();
                 c.Token = ServerConfig.NewToken();
@@ -57,7 +51,7 @@ if (args.Length == 0)
                 AuditLog.SavePairing(ps); ClipboardHelper.SetText(ps);
                 Console.WriteLine("Token 已轮换 —— 新配对串(剪贴板 + pairing.txt):");
                 Console.WriteLine(ps); return 0;
-            }
+        }
         case "uninstall": ServiceInstaller.Uninstall(); return 0;
         case "status": return DoStatus(cfgPath);
     }

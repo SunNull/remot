@@ -3,16 +3,110 @@ using Remot.Client.Config;
 using Remot.Client.Pairing;
 using Remot.Protocol;
 
-// M9:Ctrl+C 取消 + --deadline 超时
+// 双击(无参)→ 向导;有参数 → 命令行模式
+if (args.Length == 0)
+{
+    return Wizard();
+}
+
+// 命令行模式
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 for (int i = 0; i < args.Length; i++)
-{
     if (args[i] == "--deadline" && i + 1 < args.Length && int.TryParse(args[i + 1], out var sec) && sec > 0)
         cts.CancelAfter(TimeSpan.FromSeconds(sec));
-}
 return await RunSafely(args, cts.Token);
 
+// ── 双击向导 ──
+static int Wizard()
+{
+    Console.WriteLine("╔══════════════════════════════════╗");
+    Console.WriteLine("║      Remot 客户端设置向导        ║");
+    Console.WriteLine("╚══════════════════════════════════╝");
+
+    // 步骤 1:装 PATH
+    Console.Write("\n1. 安装 remot 命令到 PATH(之后任意目录可用)? (Y/n): ");
+    if (Confirm())
+    {
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Remot");
+        Directory.CreateDirectory(dir);
+        File.Copy(Environment.ProcessPath!, Path.Combine(dir, "remot.exe"), overwrite: true);
+        var path = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "";
+        if (!path.Contains(dir, StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("PATH", string.IsNullOrEmpty(path) ? dir : path + ";" + dir, EnvironmentVariableTarget.User);
+        Console.WriteLine("  ✓ 已安装 remot 到 PATH(新终端生效)");
+    }
+    else Console.WriteLine("  跳过。");
+
+    // 步骤 2:配对目标
+    Console.Write("\n2. 配对到服务端? (Y/n): ");
+    if (Confirm())
+    {
+        var clip = ClipboardHelper.GetText();
+        string? pairing = null;
+        if (clip is not null && clip.StartsWith("remot://pair#", StringComparison.OrdinalIgnoreCase))
+        { pairing = clip; Console.WriteLine("  (从剪贴板读取配对串)"); }
+        else
+        {
+            Console.Write("  请粘贴配对串(remot://pair#...): ");
+            pairing = Console.ReadLine()?.Trim();
+        }
+        if (pairing is not null && pairing.StartsWith("remot://pair#"))
+        {
+            var cfgPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".remot", "targets.json");
+            try
+            {
+                var p = PairingString.Decode(pairing);
+                var t = new Target($"target-{p.Host}", p.Host, p.Port, p.Token, p.Fingerprint);
+                using var c = new RemotClient(cfgPath); c.SaveTarget(t);
+                Console.WriteLine($"  ✓ 已登记 → {t.Host}:{t.Port}");
+                // 连通自检
+                try
+                {
+                    var stub = new RemotService.RemotServiceClient(c.GetChannel(t));
+                    stub.CheckFileAsync(new FileCheckRequest { DestPath = "__ping__", Size = 0, Sha256 = "" },
+                        headers: new() { { "authorization", $"Bearer {p.Token}" } }).GetAwaiter().GetResult();
+                    Console.WriteLine("  ✓ 连通正常,token 有效");
+                }
+                catch (Exception ex) { Console.WriteLine($"  ⚠ 连通自检失败:{ex.Message}"); }
+            }
+            catch (Exception ex) { Console.WriteLine($"  ⚠ 配对失败:{ex.Message}"); }
+        }
+        else Console.WriteLine("  配对串无效,跳过。");
+    }
+    else Console.WriteLine("  跳过。");
+
+    // 步骤 3:试运行
+    Console.Write("\n3. 试运行一条命令? (Y/n): ");
+    if (Confirm())
+    {
+        Console.Write("  目标名(回车=第一个): ");
+        var name = Console.ReadLine()?.Trim();
+        Console.Write("  命令(回车=echo ok): ");
+        var cmd = Console.ReadLine()?.Trim(); if (string.IsNullOrEmpty(cmd)) cmd = "echo ok";
+        var cfgPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".remot", "targets.json");
+        using var c = new RemotClient(cfgPath);
+        var names = c.TargetNames;
+        if (names.Count == 0) { Console.WriteLine("  无已登记目标,跳过。"); }
+        else
+        {
+            var target = string.IsNullOrEmpty(name) ? names[0] : name;
+            var r = c.RunCommandAsync(target, new[] { cmd }, shell: "cmd").GetAwaiter().GetResult();
+            if (r.Ok) foreach (var x in r.Value!) Console.WriteLine($"  [{x.Index}] exit={x.ExitCode}\n  {x.Stdout}");
+            else Console.WriteLine($"  错误: {r.Error}");
+        }
+    }
+
+    Console.WriteLine("\n══════════════════════════════════════");
+    Console.WriteLine("  ✓ 设置完成!");
+    Console.WriteLine("  之后可用:remot run -t <目标> \"命令\"");
+    Console.WriteLine("           remot upload -t <目标> ...");
+    Console.WriteLine("══════════════════════════════════════");
+    PauseExit();
+    return 0;
+}
+
+// ── 命令行模式 ──
 static async Task<int> RunSafely(string[] args, CancellationToken ct)
 {
     try { return await Run(args, ct); }
@@ -22,7 +116,7 @@ static async Task<int> RunSafely(string[] args, CancellationToken ct)
 
 static async Task<int> Run(string[] args, CancellationToken ct)
 {
-    string configPath = DefaultConfigPath();
+    string configPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".remot", "targets.json");
     var cmd = new List<string>();
     for (int i = 0; i < args.Length; i++)
     {
@@ -46,10 +140,6 @@ static async Task<int> Run(string[] args, CancellationToken ct)
     };
 }
 
-static string DefaultConfigPath() =>
-    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".remot", "targets.json");
-
-// C2:无参时自动从剪贴板读配对串;C3:pair 后连通自检
 static async Task<int> Pair(string cfg, string[] a)
 {
     string? name = null, host = null, pairing = null;
@@ -59,34 +149,27 @@ static async Task<int> Pair(string cfg, string[] a)
         else if (a[i] == "--host" && i + 1 < a.Length) host = a[++i];
         else pairing = a[i];
     }
-    // 无参 → 从剪贴板读(服务端 install 已把配对串写剪贴板)
     if (pairing is null)
     {
         var clip = ClipboardHelper.GetText();
         if (clip is not null && clip.StartsWith("remot://pair#", StringComparison.OrdinalIgnoreCase))
         { pairing = clip; Console.WriteLine("(从剪贴板读取配对串)"); }
-        else { Console.Error.WriteLine("用法:remot pair [--name X] [--host H] <配对串>  (无参时自动读剪贴板)"); return 1; }
+        else { Console.Error.WriteLine("用法:remot pair [--name X] [--host H] <配对串>  (无参时读剪贴板)"); return 1; }
     }
     var p = PairingString.Decode(pairing);
     var h = string.IsNullOrEmpty(host) ? p.Host : host;
     var t = new Target(name ?? $"target-{h}", h, p.Port, p.Token, p.Fingerprint);
     using var c = new RemotClient(cfg); c.SaveTarget(t);
-    Console.WriteLine($"✓ 已登记目标 {t.Name} → {t.Host}:{t.Port}");
-
-    // C3:连通自检(用 CheckFile 探测,期望 Exists=false 但能证明连通+鉴权)
+    Console.WriteLine($"✓ 已登记 {t.Name} → {t.Host}:{t.Port}");
     using var c2 = new RemotClient(cfg);
-    var stub = new RemotService.RemotServiceClient(c2.GetChannel(t));
     try
     {
-        var resp = await stub.CheckFileAsync(new FileCheckRequest { DestPath = "__remot_ping__", Size = 0, Sha256 = "" },
-            headers: new() { { "authorization", $"Bearer {p.Token}" } }, cancellationToken: default);
-        Console.WriteLine($"✓ 连通正常,token 有效(目标可达)。");
+        var stub = new RemotService.RemotServiceClient(c2.GetChannel(t));
+        await stub.CheckFileAsync(new FileCheckRequest { DestPath = "__ping__", Size = 0, Sha256 = "" },
+            headers: new() { { "authorization", $"Bearer {p.Token}" } });
+        Console.WriteLine("✓ 连通正常,token 有效");
     }
-    catch (Grpc.Core.RpcException ex)
-    {
-        Console.WriteLine($"⚠ 连通自检失败:{ex.StatusCode} — {ex.Message}");
-        Console.WriteLine($"  配对已保存,但请检查目标机服务是否启动 / 防火墙 / IP 是否正确。");
-    }
+    catch (Grpc.Core.RpcException ex) { Console.WriteLine($"⚠ 连通自检:{ex.StatusCode} - {ex.Message}"); }
     Console.WriteLine($"下一步:remot run -t {t.Name} \"echo ok\"");
     return 0;
 }
@@ -114,8 +197,8 @@ static async Task<int> RunCmd(string cfg, string[] a, CancellationToken ct)
 static async Task<int> Upload(string cfg, string[] a, CancellationToken ct)
 {
     var (target, _, rest) = ExtractOpts(a);
-    if (target is null) { Console.Error.WriteLine("用法:remot upload -t <目标> <src dst [src dst ...]>"); return 1; }
-    if (rest.Count % 2 != 0) { Console.Error.WriteLine("错误:upload 需要 src dst 成对"); return 1; }
+    if (target is null) { Console.Error.WriteLine("用法:remot upload -t <目标> <src dst ...>"); return 1; }
+    if (rest.Count % 2 != 0) { Console.Error.WriteLine("错误:upload 需 src dst 成对"); return 1; }
     var pairs = new List<(string, string)>();
     for (int i = 0; i + 1 < rest.Count; i += 2) pairs.Add((rest[i], rest[i + 1]));
     using var c = new RemotClient(cfg);
@@ -141,40 +224,30 @@ static async Task<int> PingCmd(string cfg, string[] a, CancellationToken ct)
 {
     var (target, _, _) = ExtractOpts(a);
     if (target is null) { Console.Error.WriteLine("用法:remot ping -t <目标>"); return 1; }
-    using var c = new RemotClient(cfg);
-    var t = new TargetsConfig(); // 仅取 target
     var tc = TargetsConfig.Load(cfg).Get(target);
     if (tc is null) { Console.Error.WriteLine($"未知目标:{target}"); return 1; }
+    using var c = new RemotClient(cfg);
     var stub = new RemotService.RemotServiceClient(c.GetChannel(tc));
     try
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        await stub.CheckFileAsync(new FileCheckRequest { DestPath = "__remot_ping__", Size = 0, Sha256 = "" },
+        await stub.CheckFileAsync(new FileCheckRequest { DestPath = "__ping__", Size = 0, Sha256 = "" },
             headers: new() { { "authorization", $"Bearer {tc.Token}" } }, cancellationToken: ct);
         Console.WriteLine($"✓ {target} 可达,token 有效 ({sw.ElapsedMilliseconds}ms)");
         return 0;
     }
-    catch (Grpc.Core.RpcException ex) { Console.Error.WriteLine($"✗ {target}:{ex.StatusCode} - {ex.Message}"); return 1; }
+    catch (Grpc.Core.RpcException ex) { Console.Error.WriteLine($"✗ {target}: {ex.StatusCode}"); return 1; }
 }
 
-// C1:CLI 自装到 %LOCALAPPDATA%\Programs\Remot + 加用户 PATH
 static int InstallCli()
 {
     var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Remot");
     Directory.CreateDirectory(dir);
-    var dst = Path.Combine(dir, "remot.exe");
-    File.Copy(Environment.ProcessPath!, dst, overwrite: true);
-
-    // 加到用户 PATH(通过 setx;注意 setx 截断 1024 字符,谨慎)
+    File.Copy(Environment.ProcessPath!, Path.Combine(dir, "remot.exe"), overwrite: true);
     var path = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "";
     if (!path.Contains(dir, StringComparison.OrdinalIgnoreCase))
-    {
-        var newPath = string.IsNullOrEmpty(path) ? dir : path + ";" + dir;
-        Environment.SetEnvironmentVariable("PATH", newPath, EnvironmentVariableTarget.User);
-    }
-    Console.WriteLine($"✓ 已安装 {dst}");
-    Console.WriteLine($"✓ 已加入用户 PATH(新开终端生效)");
-    Console.WriteLine($"  现在可以在任意目录使用:remot pair / remot run / remot upload / ...");
+        Environment.SetEnvironmentVariable("PATH", string.IsNullOrEmpty(path) ? dir : path + ";" + dir, EnvironmentVariableTarget.User);
+    Console.WriteLine($"✓ remot 已安装到 PATH(新终端生效)");
     return 0;
 }
 
@@ -198,17 +271,19 @@ static (string? target, string shell, List<string> rest) ExtractOpts(string[] a)
 }
 
 static int Unknown(string c) { Console.Error.WriteLine($"未知命令:{c}"); return PrintHelp(); }
+static bool Confirm() => (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "y") is "" or "y" or "yes";
+static void PauseExit() { Console.WriteLine("\n按任意键退出..."); Console.ReadKey(true); }
 
 static int PrintHelp()
 {
     Console.WriteLine("Remot — 远程执行 + 文件传输");
-    Console.WriteLine("  remot install-cli              安装 remot 到 PATH(全局可用)");
-    Console.WriteLine("  remot pair [--name X] [--host H] [<配对串>]  登记目标(无配对串时读剪贴板,含连通自检)");
-    Console.WriteLine("  remot run -t <目标> [--shell ...] <命令...>");
+    Console.WriteLine("  remot pair [--name X] [--host H] [<配对串>]");
+    Console.WriteLine("  remot run -t <目标> [--shell pwsh|powershell|cmd] [--deadline <秒>] <命令...>");
     Console.WriteLine("  remot upload -t <目标> <src dst [src dst ...]>");
     Console.WriteLine("  remot download -t <目标> <远程> <本地>");
-    Console.WriteLine("  remot ping -t <目标>           连通+鉴权自检");
+    Console.WriteLine("  remot ping -t <目标>");
+    Console.WriteLine("  remot install-cli              安装 remot 到 PATH");
     Console.WriteLine("  remot target list");
-    Console.WriteLine("  [--config <路径>] [--deadline <秒>]   Ctrl+C 可取消");
+    Console.WriteLine("  [--config <路径>] [--deadline <秒>]");
     return 0;
 }

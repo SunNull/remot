@@ -36,7 +36,7 @@ public class E2ETests : IAsyncLifetime
         builder.Services.AddSingleton<IProcessFactory, ProcessFactory>();
         builder.Services.AddSingleton<Hasher>();
         builder.Services.AddSingleton<FileReceiver>();
-        builder.Services.AddSingleton<FileSender>();
+        builder.Services.AddSingleton<FileSender>(sp => new FileSender(sp.GetRequiredService<Hasher>()));
         builder.Services.AddSingleton(new Remot.Server.Config.ServerConfig());   // 给 RemotServiceImpl 注入空配置(CommandGuard 用默认)
         builder.WebHost.ConfigureKestrel(k => k.ListenLocalhost(_port, lo =>
         {

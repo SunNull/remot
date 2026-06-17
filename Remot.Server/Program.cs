@@ -34,7 +34,7 @@ if (args.Length == 0)
         // 已安装:提示是否重置
         Console.WriteLine("\n检测到已有配置(保留原有证书和配对串)。");
         Console.Write("重置安装(重新生成证书+token)? (y/N): ");
-        if (!Confirm())   // 默认 N = 只更新 exe + 重启服务
+        if (!ConfirmDefaultNo())   // 默认 N = 只更新 exe + 重启服务
         {
             return DoInstall(new[] { "--keep-config" }, cfgPath, interactive: true);
         }
@@ -90,7 +90,7 @@ cfg.EnsureValid();
     builder.Services.AddSingleton(cfg);   // 给 RemotServiceImpl 注入 ServerConfig(CommandGuard 用)
     builder.Services.AddSingleton<Hasher>();
     builder.Services.AddSingleton(sp => new FileReceiver(sp.GetRequiredService<Hasher>(), cfg.AllowedBasePaths));
-    builder.Services.AddSingleton<FileSender>();
+    builder.Services.AddSingleton(sp => new FileSender(sp.GetRequiredService<Hasher>(), cfg.AllowedBasePaths));
     builder.WebHost.ConfigureKestrel(k =>
     {
         void Cfg(ListenOptions lo) { lo.Protocols = HttpProtocols.Http2; lo.UseHttps(LoadCert(cfg)); }
@@ -218,6 +218,7 @@ static bool IsPortListening(int port)
 }
 
 static bool Confirm() => (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "y") is "" or "y" or "yes";
+static bool ConfirmDefaultNo() => (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "n") is "y" or "yes";
 static void PauseExit() { Console.WriteLine("\n按任意键退出..."); Console.ReadKey(true); }
 
 static ServerConfig Bootstrap(string cfgPath, string name = "")

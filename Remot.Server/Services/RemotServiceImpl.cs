@@ -14,9 +14,10 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
     private readonly ICommandRunner _runner;
     private readonly FileReceiver _receiver;
     private readonly FileSender _sender;
+    private readonly Remot.Server.Config.ServerConfig _config;
 
-    public RemotServiceImpl(ICommandRunner runner, FileReceiver receiver, FileSender sender)
-    { _runner = runner; _receiver = receiver; _sender = sender; }
+    public RemotServiceImpl(ICommandRunner runner, FileReceiver receiver, FileSender sender, Remot.Server.Config.ServerConfig config)
+    { _runner = runner; _receiver = receiver; _sender = sender; _config = config; }
 
     public override async Task RunCommand(CommandRequest request,
         IServerStreamWriter<CommandOutput> stream, ServerCallContext context)
@@ -34,8 +35,11 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
         {
             var cmdText = request.Commands[i].Text;
 
-            // 危险命令拦截(方案 A:黑名单 + 服务/路径保护)
-            var blockReason = Remot.Server.Security.CommandGuard.Check(cmdText);
+            // 危险命令拦截(内置黑名单 + server.json 自定义)
+            var blockReason = Remot.Server.Security.CommandGuard.Check(cmdText,
+                _config.ProtectedServices.Count > 0 ? _config.ProtectedServices : null,
+                _config.ProtectedPaths.Count > 0 ? _config.ProtectedPaths : null,
+                _config.BlockedCommands.Count > 0 ? _config.BlockedCommands : null);
             if (blockReason is not null)
             {
                 AuditLog.Log($"⛔ BLOCKED: {blockReason} | cmd: {Truncate(cmdText, 100)}");

@@ -61,9 +61,26 @@ public static class CommandGuard
     };
 
     /// <summary>检查命令是否安全。返回 null=放行;否则返回拦截原因。</summary>
-    public static string? Check(string command, IReadOnlyList<string>? extraProtectedServices = null, IReadOnlyList<string>? extraProtectedPaths = null)
+    public static string? Check(string command, IReadOnlyList<string>? extraProtectedServices = null, IReadOnlyList<string>? extraProtectedPaths = null, IReadOnlyList<string>? extraBlockedPatterns = null)
     {
-        // 1. 黑名单正则
+        // 0. 用户自定义黑名单(server.json 的 BlockedCommands)
+        if (extraBlockedPatterns is not null)
+        {
+            foreach (var p in extraBlockedPatterns)
+            {
+                if (!string.IsNullOrWhiteSpace(p))
+                {
+                    try
+                    {
+                        if (Regex.IsMatch(command, p, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100)))
+                            return $"⛔ 拦截(自定义规则 '{p}'):命令匹配用户黑名单";
+                    }
+                    catch { /* 无效正则:跳过 */ }
+                }
+            }
+        }
+
+        // 1. 内置黑名单(不可关闭)
         foreach (var (pattern, reason) in HardBlocked)
             if (pattern.IsMatch(command))
                 return $"⛔ 拦截({reason}):命令匹配危险模式";

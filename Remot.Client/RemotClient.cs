@@ -25,7 +25,7 @@ public sealed class RemotClient : IDisposable
         _config.Targets.Select(kv => (kv.Key, kv.Value.Host, kv.Value.Port)).ToList();
 
     public async Task<RemotResult<IReadOnlyList<CommandResult>>> RunCommandAsync(
-        string target, IReadOnlyList<string> commands, string shell = "powershell", int? timeoutMs = null,
+        string target, IReadOnlyList<string> commands, string? shell = null, int? timeoutMs = null,
         string? cwd = null, CancellationToken ct = default)
     {
         var t = _config.Get(target);
@@ -33,7 +33,7 @@ public sealed class RemotClient : IDisposable
         try
         {
             var stub = new RemotService.RemotServiceClient(_channels.Get(t));
-            var req = new CommandRequest { Shell = shell, TimeoutMs = timeoutMs ?? 0, Cwd = cwd ?? "" };
+            var req = new CommandRequest { Shell = shell ?? "", TimeoutMs = timeoutMs ?? 0, Cwd = cwd ?? "" };
             req.Commands.AddRange(commands.Select(c => new Command { Text = c }));
             using var call = stub.RunCommand(req, headers: Auth(t), cancellationToken: ct);
             var results = new List<CommandResult>();
@@ -127,6 +127,52 @@ public sealed class RemotClient : IDisposable
             return RemotResult<None>.Success(default);
         }
         catch (Exception ex) { TryDelete(tmp); return RemotResult<None>.Fail(ex.Message); }
+    }
+
+    public async Task<RemotResult<string>> OpenSessionAsync(string target, string? shell = null, string? cwd = null, CancellationToken ct = default)
+    {
+        var t = _config.Get(target);
+        if (t is null) return RemotResult<string>.Fail($"未知目标:{target}");
+        try
+        {
+            var stub = new RemotService.RemotServiceClient(_channels.Get(t));
+            var r = await stub.OpenSessionAsync(new OpenSessionRequest { Shell = shell ?? "", Cwd = cwd ?? "" }, headers: Auth(t), cancellationToken: ct);
+            return RemotResult<string>.Success(r.SessionId);
+        }
+        catch (Exception ex) { return RemotResult<string>.Fail(ex.Message); }
+    }
+
+    public async Task<RemotResult<IReadOnlyList<CommandResult>>> RunInSessionAsync(
+        string target, string sessionId, string command, int? timeoutMs = null, CancellationToken ct = default)
+    {
+        var t = _config.Get(target);
+        if (t is null) return RemotResult<IReadOnlyList<CommandResult>>.Fail($"未知目标:{target}");
+        try
+        {
+            var stub = new RemotService.RemotServiceClient(_channels.Get(t));
+            using var call = stub.RunInSession(new RunInSessionRequest { SessionId = sessionId, Command = command, TimeoutMs = timeoutMs ?? 0 }, headers: Auth(t), cancellationToken: ct);
+            var results = new List<CommandResult>();
+            while (await call.ResponseStream.MoveNext(ct))
+                if (call.ResponseStream.Current.KindCase == CommandOutput.KindOneofCase.Result)
+                    results.Add(call.ResponseStream.Current.Result);
+            return RemotResult<IReadOnlyList<CommandResult>>.Success(results);
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Unauthenticated)
+        { return RemotResult<IReadOnlyList<CommandResult>>.Fail("token 无效"); }
+        catch (Exception ex) { return RemotResult<IReadOnlyList<CommandResult>>.Fail(ex.Message); }
+    }
+
+    public async Task<RemotResult<None>> CloseSessionAsync(string target, string sessionId, CancellationToken ct = default)
+    {
+        var t = _config.Get(target);
+        if (t is null) return RemotResult<None>.Fail($"未知目标:{target}");
+        try
+        {
+            var stub = new RemotService.RemotServiceClient(_channels.Get(t));
+            await stub.CloseSessionAsync(new CloseSessionRequest { SessionId = sessionId }, headers: Auth(t), cancellationToken: ct);
+            return RemotResult<None>.Success(default);
+        }
+        catch (Exception ex) { return RemotResult<None>.Fail(ex.Message); }
     }
 
     public void SaveTarget(Target t)

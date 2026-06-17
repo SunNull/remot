@@ -17,9 +17,9 @@
 | `Remot.Protocol` | gRPC 契约(`remot.proto`)+ 共享工具(Hasher/ClipboardHelper) |
 | `Remot.Server` | 被控端守护进程,Windows 服务常驻 |
 | `Remot.Client` | 客户端类库(gRPC 调用 + 配置 + 配对 + 分块) |
-| `Remot.Mcp` | MCP server,供 Claude Code 调用(5 个工具) |
+| `Remot.Mcp` | MCP server,供 Claude Code 调用(8 个工具) |
 
-协议:`RunCommand`(服务端流)、`Upload`(客户端流)、`Download`(服务端流)、`CheckFile`(预检)。
+协议:`RunCommand`(服务端流)、`Upload`(客户端流)、`Download`(服务端流)、`CheckFile`(预检)、持久会话 `OpenSession`/`RunInSession`/`CloseSession`(可选,跨命令复用 shell)。
 
 ---
 
@@ -78,15 +78,18 @@
 
 ## 使用
 
-### agent 工具(5 个)
+### agent 工具(8 个)
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
 | `remot_pair` | pairing_string, name? | 配对新服务器(agent 可自行调用) |
 | `remot_list_targets` | — | 列出已配对的服务器 |
-| `remot_run` | target, commands[], shell?, cwd? | 远程执行命令(批量+流式) |
+| `remot_run` | target, commands[], shell?, cwd? | 远程执行命令(批量合并一个 shell、流式) |
 | `remot_upload` | target, files[{src,dst}] | 上传文件(并发+SHA256校验) |
 | `remot_download` | target, remotePath, localPath | 下载文件(完整性校验) |
+| `remot_open_session` | target, shell?, cwd? | 打开持久会话(跨命令保持 cwd/env,省启动) |
+| `remot_run_in_session` | target, session_id, command, timeout? | 会话内执行单条命令 |
+| `remot_close_session` | target, session_id | 关闭会话(释放 shell 进程) |
 
 ### 典型部署循环
 

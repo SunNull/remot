@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
 namespace Remot.Server.Execution;
@@ -9,6 +10,7 @@ public sealed class CommandRunner : ICommandRunner
     private readonly IProcessFactory _factory;
     private const string TruncationMarker = "...[truncated]";
     private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(3);
+    private static readonly Regex SentinelRegexObj = new(@"^__REMOT_END_(\d+)__:(-?\d+)\s*$", RegexOptions.Compiled);
 
     public CommandRunner(IProcessFactory factory) => _factory = factory;
 
@@ -25,9 +27,7 @@ public sealed class CommandRunner : ICommandRunner
         var stdoutBuf = new OutputAccumulator(spec.MaxOutputBytes);
         var stderrBuf = new OutputAccumulator(spec.MaxOutputBytes);
 
-        // H1/M2:stdout/stderr 在不同 ThreadPool 线程上回调,若直接 await stream.WriteAsync
-        // 或 Append 同一 StringBuilder 会并发(gRPC IServerStreamWriter 仅允许单写,会抛异常/帧交错)。
-        // 用一个 Channel 把所有行汇到单消费者顺序处理,彻底消除并发写入。
+        // H1/M2:stdout/stderr 在不同 ThreadPool 线程回调,用 Channel 汇到单消费者顺序处理,消除并发写。
         var channel = Channel.CreateUnbounded<StreamLine>(new UnboundedChannelOptions { SingleReader = true });
         var consumer = Task.Run(async () =>
         {
@@ -52,19 +52,11 @@ public sealed class CommandRunner : ICommandRunner
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         if (spec.TimeoutMs is int ms && ms > 0)
             linked.CancelAfter(TimeSpan.FromMilliseconds(ms));
-        var timeout = spec.TimeoutMs is int t && t > 0
-            ? TimeSpan.FromMilliseconds(t)
-            : Timeout.InfiniteTimeSpan;
+        var timeout = spec.TimeoutMs is int t && t > 0 ? TimeSpan.FromMilliseconds(t) : Timeout.InfiniteTimeSpan;
 
-        bool timedOut = false;
-        bool cancelled = false;
-        bool exited;
+        bool timedOut = false, cancelled = false, exited;
         try { exited = await proc.WaitForExitAsync(timeout, linked.Token); }
-        catch (OperationCanceledException)
-        {
-            exited = false;
-            cancelled = ct.IsCancellationRequested;
-        }
+        catch (OperationCanceledException) { exited = false; cancelled = ct.IsCancellationRequested; }
 
         if (!exited)
         {
@@ -73,11 +65,7 @@ public sealed class CommandRunner : ICommandRunner
             try { await proc.WaitForExitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); } catch { }
         }
 
-        // 排空异步输出管道:进程退出后,OutputDataReceived 回调可能仍在路上。
-        try { await Task.WhenAll(stdoutEof.Task, stderrEof.Task).WaitAsync(DrainTimeout); }
-        catch { }
-
-        // 关闭 Channel,等单消费者处理完剩余行后退出 —— 此时无并发,stream 写入安全。
+        try { await Task.WhenAll(stdoutEof.Task, stderrEof.Task).WaitAsync(DrainTimeout); } catch { }
         channel.Writer.TryComplete();
         try { await consumer.WaitAsync(DrainTimeout); } catch { }
 
@@ -89,6 +77,105 @@ public sealed class CommandRunner : ICommandRunner
             DurationMs: sw.ElapsedMilliseconds,
             TimedOut: timedOut,
             Error: cancelled ? "cancelled" : null);
+    }
+
+    /// <summary>优化2:多条命令拼成一个脚本,单进程顺序执行,sentinel 切分每条结果。仅 PowerShell。</summary>
+    public async Task<IReadOnlyList<CommandRunResult>> RunBatchAsync(
+        IReadOnlyList<CommandSpec> specs, CancellationToken ct = default, Func<int, StreamLine, Task>? onLine = null)
+    {
+        if (specs.Count == 0) return Array.Empty<CommandRunResult>();
+        var sw = Stopwatch.StartNew();
+        var first = specs[0];
+        var batchSpec = first with { Text = BuildBatchScript(specs), MergeStreams = true };
+
+        IProcessAdapter proc;
+        try { proc = _factory.Start(batchSpec); }
+        catch (ProcessStartException ex)
+        {
+            return specs.Select((_, i) => new CommandRunResult(-1, "", "", 0, false, i == 0 ? ex.Message : "批处理启动失败,未执行")).ToList();
+        }
+        using var _ = proc;
+
+        var bufs = specs.Select(_ => new OutputAccumulator(first.MaxOutputBytes)).ToList();
+        var codes = new int[specs.Count];
+        Array.Fill(codes, -1);
+        var stdoutEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stderrEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var channel = Channel.CreateUnbounded<(int Idx, string Line)>(new UnboundedChannelOptions { SingleReader = true });
+        int current = 0;
+        var consumer = Task.Run(async () =>
+        {
+            await foreach (var (idx, line) in channel.Reader.ReadAllAsync())
+            {
+                bufs[idx].Append(line);
+                if (onLine is not null)
+                    try { await onLine(idx, new StreamLine(false, line)); } catch { }
+            }
+        });
+
+        void OnLine(string? data, bool isStderr)
+        {
+            if (data is null) { (isStderr ? stderrEof : stdoutEof).TrySetResult(); return; }
+            var m = SentinelRegexObj.Match(data);
+            if (m.Success)
+            {
+                if (int.TryParse(m.Groups[1].Value, out var i) && i >= 0 && i < codes.Length)
+                    codes[i] = int.TryParse(m.Groups[2].Value, out var c) ? c : -1;
+                current = i + 1;
+                return;
+            }
+            var idx = Math.Min(current, specs.Count - 1);
+            channel.Writer.TryWrite((idx, data));
+        }
+        proc.OutputDataReceived += (_, e) => OnLine(e.Data, isStderr: false);
+        proc.ErrorDataReceived += (_, e) => OnLine(e.Data, isStderr: true);   // MergeStreams:stderr 并入当前命令
+        proc.BeginOutputRead();
+        proc.BeginErrorRead();
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (first.TimeoutMs is int ms && ms > 0)
+            linked.CancelAfter(TimeSpan.FromMilliseconds(ms));
+        var timeout = first.TimeoutMs is int t && t > 0 ? TimeSpan.FromMilliseconds(t) : Timeout.InfiniteTimeSpan;
+
+        bool timedOut = false, cancelled = false, exited;
+        try { exited = await proc.WaitForExitAsync(timeout, linked.Token); }
+        catch (OperationCanceledException) { exited = false; cancelled = ct.IsCancellationRequested; }
+
+        if (!exited)
+        {
+            if (!cancelled) timedOut = true;
+            proc.KillEntireTree();
+            try { await proc.WaitForExitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); } catch { }
+        }
+
+        try { await Task.WhenAll(stdoutEof.Task, stderrEof.Task).WaitAsync(DrainTimeout); } catch { }
+        channel.Writer.TryComplete();
+        try { await consumer.WaitAsync(DrainTimeout); } catch { }
+
+        sw.Stop();
+        return specs.Select((_, i) => new CommandRunResult(
+            ExitCode: codes[i] != -1 ? codes[i] : (proc.HasExited ? proc.ExitCode : -1),
+            Stdout: bufs[i].ToString(),
+            Stderr: "",
+            DurationMs: sw.ElapsedMilliseconds,
+            TimedOut: timedOut,
+            Error: cancelled ? "cancelled" : null)).ToList();
+    }
+
+    /// <summary>构造批量脚本:每条命令后跟 sentinel 行(退出码)。PowerShell 用单引号避免 -Command 外层转义。</summary>
+    private static string BuildBatchScript(IReadOnlyList<CommandSpec> specs)
+    {
+        var sb = new StringBuilder();
+        sb.Append("$ErrorActionPreference='Continue'");
+        for (int i = 0; i < specs.Count; i++)
+        {
+            sb.Append("; $LASTEXITCODE = $null");   // 重置,避免上条外部程序退出码污染本条判断
+            sb.Append("; ").Append(specs[i].Text);
+            sb.Append("; $remot_ec = if (-not $?) { 1 } elseif ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }");
+            sb.Append("; Write-Output ('__REMOT_END_").Append(i).Append("__:' + $remot_ec)");
+        }
+        return sb.ToString();
     }
 
     private sealed class OutputAccumulator(long maxBytes)

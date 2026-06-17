@@ -38,6 +38,7 @@ public class E2ETests : IAsyncLifetime
         builder.Services.AddSingleton<FileReceiver>();
         builder.Services.AddSingleton<FileSender>(sp => new FileSender(sp.GetRequiredService<Hasher>()));
         builder.Services.AddSingleton(new Remot.Server.Config.ServerConfig());   // 给 RemotServiceImpl 注入空配置(CommandGuard 用默认)
+        builder.Services.AddSingleton<SessionManager>();   // 优化3:持久会话池
         builder.WebHost.ConfigureKestrel(k => k.ListenLocalhost(_port, lo =>
         {
             lo.Protocols = HttpProtocols.Http2;
@@ -115,5 +116,22 @@ public class E2ETests : IAsyncLifetime
         File.Delete(src);
         if (File.Exists(dst)) File.Delete(dst);
         if (File.Exists(local)) File.Delete(local);
+    }
+
+    [Fact]
+    public async Task Session_keeps_state_across_commands()   // 优化3:持久会话跨命令保持状态
+    {
+        var open = await Client.OpenSessionAsync("e2e");
+        Assert.True(open.Ok, open.Error);
+        var sid = open.Value!;
+        try
+        {
+            var r1 = await Client.RunInSessionAsync("e2e", sid, "$global:remot_x = 'persisted'");
+            Assert.True(r1.Ok, r1.Error);
+            var r2 = await Client.RunInSessionAsync("e2e", sid, "Write-Output $global:remot_x");
+            Assert.True(r2.Ok);
+            Assert.Contains("persisted", r2.Value![0].Stdout);   // 同一 shell 进程,全局变量保持
+        }
+        finally { await Client.CloseSessionAsync("e2e", sid); }
     }
 }

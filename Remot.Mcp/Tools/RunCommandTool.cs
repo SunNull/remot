@@ -14,7 +14,7 @@ public sealed class RunCommandTool
     public async Task<string> remot_run(
         [Description("目标名")] string target,
         [Description("命令数组")] string[] commands,
-        [Description("shell: powershell/pwsh/cmd")] string shell = "powershell",
+        [Description("shell: powershell/pwsh/cmd(留空=服务端自动,优先 pwsh)")] string? shell = null,
         int? timeout_ms = null,
         [Description("工作目录,可选")] string? cwd = null)
     {

@@ -82,6 +82,9 @@ static void PrintTemplate(string configPath)
     Console.WriteLine("  remot_run     (target, commands[], shell?)    远程执行");
     Console.WriteLine("  remot_upload  (target, files[{src,dst}])      上传文件");
     Console.WriteLine("  remot_download(target, remotePath, localPath) 下载文件");
+    Console.WriteLine("  remot_open_session (target, shell?, cwd?)         打开持久会话(可选,省启动开销)");
+    Console.WriteLine("  remot_run_in_session(target, session_id, command)  会话内执行(保持 cwd/env)");
+    Console.WriteLine("  remot_close_session(target, session_id)          关闭会话");
     Console.WriteLine();
     Console.WriteLine("按任意键退出...");
     Console.ReadKey(true);

@@ -8,11 +8,15 @@ service RemotService {
   rpc Upload      (stream FileChunk) returns (TransferResult);
   rpc Download    (FileRequest)      returns (stream FileChunk);
   rpc CheckFile   (FileCheckRequest) returns (FileCheckResponse);
+  // 优化3:持久会话 —— 跨请求复用同一 shell 进程(保持 cwd/env,省启动开销)
+  rpc OpenSession  (OpenSessionRequest)  returns (OpenSessionResponse);
+  rpc RunInSession (RunInSessionRequest) returns (stream CommandOutput);
+  rpc CloseSession (CloseSessionRequest) returns (CloseSessionResponse);
 }
 
 message CommandRequest {
   repeated Command commands = 1;
-  string shell = 2;                 // "pwsh"|"powershell"|"cmd";空值由服务端回退为 powershell
+  string shell = 2;                 // "pwsh"|"powershell"|"cmd";空/"auto"=服务端自动探测(pwsh 优先)
   string cwd = 3;
   map<string,string> env = 4;
   int32 timeout_ms = 5;            // 单条命令超时
@@ -56,3 +60,10 @@ message TransferResult { bool ok = 1; string dest = 2; int64 bytes = 3; string e
 message FileRequest { string path = 1; }
 message FileCheckRequest { string dest_path = 1; int64 size = 2; string sha256 = 3; }
 message FileCheckResponse { bool exists = 1; bool matches = 2; }
+
+// 优化3:持久会话
+message OpenSessionRequest  { string shell = 1; string cwd = 2; }
+message OpenSessionResponse { string session_id = 1; }
+message RunInSessionRequest { string session_id = 1; string command = 2; int32 timeout_ms = 3; }
+message CloseSessionRequest  { string session_id = 1; }
+message CloseSessionResponse { bool ok = 1; string error = 2; }

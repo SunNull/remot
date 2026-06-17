@@ -106,6 +106,7 @@ catch (InvalidOperationException ex)
     builder.Services.AddSingleton<ICommandRunner, CommandRunner>();
     builder.Services.AddSingleton<IProcessFactory, ProcessFactory>();
     builder.Services.AddSingleton(cfg);   // 给 RemotServiceImpl 注入 ServerConfig(CommandGuard 用)
+    builder.Services.AddSingleton<SessionManager>();   // 优化3:持久会话池
     builder.Services.AddSingleton<Hasher>();
     builder.Services.AddSingleton(sp => new FileReceiver(sp.GetRequiredService<Hasher>(), cfg.AllowedBasePaths));
     builder.Services.AddSingleton(sp => new FileSender(sp.GetRequiredService<Hasher>(), cfg.AllowedBasePaths));

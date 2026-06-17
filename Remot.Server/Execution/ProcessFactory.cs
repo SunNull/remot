@@ -40,9 +40,9 @@ public sealed class ProcessFactory : IProcessFactory
 
     private static ProcessStartInfo BuildStartInfo(CommandSpec spec)
     {
-        var shell = spec.Shell.ToLowerInvariant();
+        var shell = ShellDetector.Resolve(spec.Shell).ToLowerInvariant();   // 优化1:空/auto → pwsh 优先
         if (!AllowedShells.Contains(shell))   // H9:白名单,未知 shell 显式拒绝
-            throw new ArgumentException($"不支持的 shell: {spec.Shell}(允许: pwsh/powershell/cmd)");
+            throw new ArgumentException($"不支持的 shell: {shell}(允许: pwsh/powershell/cmd,空/auto=自动)");
 
         var (fileName, args) = shell switch
         {

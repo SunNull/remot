@@ -122,6 +122,8 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     for (int i = 0; i < extra.Length - 1; i++)
         if (extra[i] == "--name") serverName = extra[i + 1];
 
+    try
+    {
     Console.WriteLine("\n▶ 安装到 C:\\Program Files\\Remot ...");
     var installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Remot");
     Directory.CreateDirectory(installDir);
@@ -149,8 +151,15 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
 
     Console.WriteLine("\n══════════════════════════════════════");
     Console.WriteLine("  ✓ 全部完成!配对串已在剪贴板。");
-    Console.WriteLine("  下一步:在开发机双击 Remot.Cli.exe");
     Console.WriteLine("══════════════════════════════════════");
+    }
+    catch (Exception ex)
+    {
+        var msg = $"[{DateTime.Now:O}] 安装失败:\n{ex}\n";
+        Console.Error.WriteLine($"\n✗ 安装失败:{ex.Message}");
+        Console.Error.WriteLine($"  详细已写入:{Path.Combine(Path.GetDirectoryName(cfgPath)!, "install-error.log")}");
+        try { File.WriteAllText(Path.Combine(Path.GetDirectoryName(cfgPath)!, "install-error.log"), msg); } catch { }
+    }
     if (interactive) PauseExit();
     return 0;
 }

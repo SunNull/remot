@@ -12,6 +12,9 @@ public static class CertGenerator
         var req = new CertificateRequest($"CN={dnsName}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         req.CertificateExtensions.Add(new X509KeyUsageExtension(
             X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, critical: true));
+        // L1:补 serverAuth EKU,严格客户端不会拒绝。
+        req.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(
+            new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") /* serverAuth */ }, critical: false));
         var san = new SubjectAlternativeNameBuilder();
         san.AddDnsName(dnsName);
         req.CertificateExtensions.Add(san.Build());

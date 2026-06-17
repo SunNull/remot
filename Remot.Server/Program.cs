@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Remot.Server;
@@ -22,6 +23,7 @@ if (args.Length > 0)
         case "install":
             {
                 var c = File.Exists(cfgPath) ? ServerConfig.Load(cfgPath) : Bootstrap(cfgPath);
+                c.EnsureValid();   // C3:空 token 不允许注册服务
                 ServiceInstaller.Install(Environment.ProcessPath!, c.Port);
                 return 0;
             }
@@ -31,6 +33,7 @@ if (args.Length > 0)
 }
 
 var cfg = File.Exists(cfgPath) ? ServerConfig.Load(cfgPath) : Bootstrap(cfgPath);
+cfg.EnsureValid();   // C3:空 token 直接拒绝启动(优于无认证运行)
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddWindowsService(o => o.ServiceName = ServiceInstaller.ServiceName);
@@ -39,16 +42,17 @@ builder.Services.AddSingleton<TokenInterceptor>(_ => new TokenInterceptor(cfg.To
 builder.Services.AddSingleton<ICommandRunner, CommandRunner>();
 builder.Services.AddSingleton<IProcessFactory, ProcessFactory>();
 builder.Services.AddSingleton<Hasher>();
-builder.Services.AddSingleton<FileReceiver>();
+builder.Services.AddSingleton(sp => new FileReceiver(sp.GetRequiredService<Hasher>(), cfg.AllowedBasePaths));   // C1:注入允许基目录
 builder.Services.AddSingleton<FileSender>();
 
 builder.WebHost.ConfigureKestrel(k =>
 {
-    k.ListenAnyIP(cfg.Port, lo =>
-    {
-        lo.Protocols = HttpProtocols.Http2;
-        lo.UseHttps(LoadCert(cfg));
-    });
+    void Configure(ListenOptions lo) { lo.Protocols = HttpProtocols.Http2; lo.UseHttps(LoadCert(cfg)); }
+    // H3:按配置绑定;默认全网卡,生产可改内网地址
+    if (string.IsNullOrWhiteSpace(cfg.BindAddress) || cfg.BindAddress is "0.0.0.0" or "*")
+        k.ListenAnyIP(cfg.Port, Configure);
+    else
+        k.Listen(IPAddress.Parse(cfg.BindAddress), cfg.Port, Configure);
 });
 
 var app = builder.Build();
@@ -58,16 +62,17 @@ return 0;
 
 static ServerConfig Bootstrap(string cfgPath)
 {
-    var password = Guid.NewGuid().ToString("N");
+    // L2:用密码学随机数做 PFX 密码,而非 GUID
+    var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     var (cert, fingerprint) = CertGenerator.GenerateSelfSigned("remot", password);
     var certFile = Path.Combine(Path.GetDirectoryName(cfgPath)!, "server.pfx");
     File.WriteAllBytes(certFile, cert.Export(X509ContentType.Pfx, password));
     var cfg = ServerConfig.CreateNew(7070, ServerConfig.NewToken(), certFile, password);
     cfg.Save(cfgPath);
-    var host = LocalLanIp() ?? Environment.MachineName;   // 自动取首选局域网 IP,失败回退机器名
+    var host = LocalLanIp() ?? Environment.MachineName;
     Console.WriteLine("==== Remot 服务端已初始化 ====");
     Console.WriteLine($"本机探测地址:{host}(若不对,开发机用 `remot pair --host <真实IP> \"配对串\"` 覆盖)");
-    Console.WriteLine("把下面这行配对串粘到开发机执行 `remot pair`:");
+    Console.WriteLine("把下面这行配对串粘到开发机执行 `remot pair`(注:配对串即凭证,用后妥善保管):");
     Console.WriteLine(PairingPayload.Encode(host, cfg.Port, cfg.Token, fingerprint));
     return cfg;
 }

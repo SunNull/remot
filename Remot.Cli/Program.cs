@@ -2,7 +2,13 @@ using Remot.Client;
 using Remot.Client.Config;
 using Remot.Client.Pairing;
 
-return Run(args);
+return RunSafely(args);
+
+static int RunSafely(string[] args)
+{
+    try { return Run(args); }
+    catch (Exception ex) { Console.Error.WriteLine($"错误: {ex.Message}"); return 1; }   // H7:顶层兜底,不抛堆栈
+}
 
 static int Run(string[] args)
 {
@@ -72,13 +78,15 @@ static int Upload(string cfg, string[] a)
 {
     var (target, _, rest) = ExtractOpts(a);
     if (target is null) { Console.Error.WriteLine("用法:remot upload -t <目标> <src dst [src dst ...]>"); return 1; }
+    if (rest.Count % 2 != 0) { Console.Error.WriteLine("错误:upload 需要 src dst 成对(当前参数为奇数)"); return 1; }   // L9
     var pairs = new List<(string, string)>();
     for (int i = 0; i + 1 < rest.Count; i += 2) pairs.Add((rest[i], rest[i + 1]));
     using var c = new RemotClient(cfg);
     var r = c.UploadAsync(target, pairs).GetAwaiter().GetResult();
     if (!r.Ok) { Console.Error.WriteLine(r.Error); return 1; }
-    foreach (var x in r.Value!) Console.WriteLine($"{x.Dest}: {(x.Ok ? "OK" : x.Error)} ({x.Bytes}B)");
-    return 0;
+    int rc = 0;
+    foreach (var x in r.Value!) { Console.WriteLine($"{x.Dest}: {(x.Ok ? "OK" : x.Error)} ({x.Bytes}B)"); if (!x.Ok) rc = 2; }   // M8:部分失败反映到退出码
+    return rc;
 }
 
 static int Download(string cfg, string[] a)

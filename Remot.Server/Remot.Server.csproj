@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Grpc.AspNetCore" Version="2.64.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
+    <!-- System.IO.FileSystem.AccessControl 类型由框架隐式提供,无需显式引用(NU1510) -->
   </ItemGroup>
 
   <ItemGroup>

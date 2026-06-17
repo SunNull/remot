@@ -11,7 +11,7 @@ public sealed class CommandRunner : ICommandRunner
 
     public CommandRunner(IProcessFactory factory) => _factory = factory;
 
-    public async Task<CommandRunResult> RunAsync(CommandSpec spec, CancellationToken ct = default)
+    public async Task<CommandRunResult> RunAsync(CommandSpec spec, CancellationToken ct = default, Func<StreamLine, Task>? onLine = null)
     {
         var sw = Stopwatch.StartNew();
         IProcessAdapter proc;
@@ -19,21 +19,13 @@ public sealed class CommandRunner : ICommandRunner
         catch (ProcessStartException ex) { return new CommandRunResult(-1, "", "", 0, false, ex.Message); }
         using var _ = proc;   // IProcessAdapter 实现 IDisposable
 
-        // 用 EOF(null 回调)追踪两条流是否排空,避免进程退出后丢尾部输出。
+        // EOF(null 回调)追踪两条流是否排空,避免进程退出后丢尾部输出。
         var stdoutEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stderrEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stdoutBuf = new OutputAccumulator(spec.MaxOutputBytes);
         var stderrBuf = new OutputAccumulator(spec.MaxOutputBytes);
-        proc.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is null) stdoutEof.TrySetResult();
-            else stdoutBuf.Append(e.Data);
-        };
-        proc.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is null) stderrEof.TrySetResult();
-            else stderrBuf.Append(e.Data);
-        };
+        proc.OutputDataReceived += (_, e) => HandleLine(e.Data, isStderr: false, stdoutBuf, stdoutEof, onLine);
+        proc.ErrorDataReceived += (_, e) => HandleLine(e.Data, isStderr: true, stderrBuf, stderrEof, onLine);
         proc.BeginOutputRead();
         proc.BeginErrorRead();
 
@@ -51,20 +43,19 @@ public sealed class CommandRunner : ICommandRunner
         catch (OperationCanceledException)
         {
             exited = false;
-            cancelled = ct.IsCancellationRequested;   // 外部取消 vs 超时
+            cancelled = ct.IsCancellationRequested;
         }
 
-        // 未正常退出 → 杀整树,确保不留孤儿(含 nssm 拉起的子服务)。
         if (!exited)
         {
-            if (!cancelled) timedOut = true;           // 未退出且非外部取消 = 超时
+            if (!cancelled) timedOut = true;
             proc.KillEntireTree();
             try { await proc.WaitForExitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); } catch { }
         }
 
-        // 排空异步输出管道:进程退出后,OutputDataReceived 回调可能仍在路上。
+        // 排空异步输出管道:进程退出后回调可能仍在路上。
         try { await Task.WhenAll(stdoutEof.Task, stderrEof.Task).WaitAsync(DrainTimeout); }
-        catch { /* 排空超时:尽力而为 */ }
+        catch { }
 
         sw.Stop();
         return new CommandRunResult(
@@ -74,6 +65,17 @@ public sealed class CommandRunner : ICommandRunner
             DurationMs: sw.ElapsedMilliseconds,
             TimedOut: timedOut,
             Error: cancelled ? "cancelled" : null);
+    }
+
+    private static void HandleLine(string? line, bool isStderr, OutputAccumulator buf, TaskCompletionSource eof, Func<StreamLine, Task>? onLine)
+    {
+        if (line is null) { eof.TrySetResult(); return; }
+        buf.Append(line);
+        if (onLine is not null)
+        {
+            // H1:实时流式。reader 线程无同步上下文,GetResult 不会死锁;客户端慢则靠超时/杀树自恢复。
+            try { onLine(new StreamLine(isStderr, line)).GetAwaiter().GetResult(); } catch { }
+        }
     }
 
     private sealed class OutputAccumulator(long maxBytes)
@@ -86,12 +88,7 @@ public sealed class CommandRunner : ICommandRunner
         {
             if (line is null || _capped) return;
             var add = Encoding.UTF8.GetByteCount(line) + Environment.NewLine.Length;
-            if (_bytes + add > maxBytes)
-            {
-                _capped = true;
-                _sb.Append(TruncationMarker);
-                return;
-            }
+            if (_bytes + add > maxBytes) { _capped = true; _sb.Append(TruncationMarker); return; }
             _bytes += add;
             _sb.AppendLine(line);
         }

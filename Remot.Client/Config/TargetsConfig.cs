@@ -9,11 +9,15 @@ public sealed class TargetsConfig
     public static TargetsConfig Load(string path) =>
         File.Exists(path) ? (JsonSerializer.Deserialize<TargetsConfig>(File.ReadAllText(path)) ?? new()) : new();
 
+    /// <summary>H6 原子写(临时文件 + Move),避免崩溃损坏凭证。</summary>
     public void Save(string path)
     {
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllText(path, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        if (File.Exists(path)) File.Replace(tmp, path, null);
+        else File.Move(tmp, path);
     }
 
     public Target? Get(string name) => Targets.TryGetValue(name, out var t) ? t.ToTarget(name) : null;

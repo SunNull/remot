@@ -34,6 +34,15 @@ public sealed class ChannelManager : IDisposable
         }
     }
 
+    /// <summary>H8:目标配置更新(host/指纹变化)后失效旧通道,避免复用陈旧连接。</summary>
+    public void Invalidate(string name)
+    {
+        lock (_lock)
+        {
+            if (_channels.Remove(name, out var ch)) ch.Dispose();
+        }
+    }
+
     public void Dispose()
     {
         lock (_lock)

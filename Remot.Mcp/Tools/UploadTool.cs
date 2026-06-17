@@ -16,6 +16,10 @@ public sealed class UploadTool
         [Description("源文件路径数组")] string[] files,
         [Description("目的路径数组,与 files 同序")] string[] dests)
     {
+        // C5:数组长度/空校验,避免 IndexOutOfRangeException 冲垮工具调用。
+        if (files is null || dests is null || files.Length != dests.Length)
+            return $"ERROR: files 与 dests 数量必须一致(files={files?.Length ?? 0}, dests={dests?.Length ?? 0})";
+
         var pairs = new List<(string, string)>();
         for (int i = 0; i < files.Length; i++) pairs.Add((files[i], dests[i]));
         var r = await _client.UploadAsync(target, pairs);

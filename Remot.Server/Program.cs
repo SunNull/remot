@@ -23,11 +23,26 @@ if (args.Length == 0)
     var dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Remot");
     Directory.CreateDirectory(dataDir);
     var cfgPath = Path.Combine(dataDir, "server.json");
-    // 双击 = 安装/确保服务已注册
+    bool alreadyInstalled = File.Exists(cfgPath);
+
     Console.WriteLine("╔══════════════════════════════════╗");
     Console.WriteLine("║      Remot 服务端安装向导        ║");
     Console.WriteLine("╚══════════════════════════════════╝");
-    Console.Write("继续? (Y/n): ");
+
+    if (alreadyInstalled)
+    {
+        // 已安装:提示是否重置
+        Console.WriteLine("\n检测到已有配置(保留原有证书和配对串)。");
+        Console.Write("重置安装(重新生成证书+token)? (y/N): ");
+        if (!Confirm())   // 默认 N = 只更新 exe + 重启服务
+        {
+            return DoInstall(new[] { "--keep-config" }, cfgPath, interactive: true);
+        }
+        // 选择 Y = 删旧配置,按首次安装走
+        try { File.Delete(cfgPath); } catch { }
+    }
+
+    Console.Write("\n继续安装? (Y/n): ");
     if (!Confirm()) { Console.WriteLine("已取消。"); PauseExit(); return 0; }
     Console.Write("服务器名称(可选,回车=机器名): ");
     var nameInput = Console.ReadLine()?.Trim();
@@ -113,7 +128,8 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
         return 0;
     }
 
-    // 已提权:解析 --name → 自动执行全部步骤
+    // 已提权:解析参数
+    bool keepConfig = extra.Contains("--keep-config");
     string serverName = "";
     for (int i = 0; i < extra.Length - 1; i++)
         if (extra[i] == "--name") serverName = extra[i + 1];
@@ -127,8 +143,17 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     File.Copy(Environment.ProcessPath!, exePath, overwrite: true);
     Console.WriteLine("  ✓ 已安装");
 
-    Console.WriteLine("▶ 生成证书 + 配置 ...");
-    var c = File.Exists(cfgPath) ? ServerConfig.Load(cfgPath) : Bootstrap(cfgPath, serverName);
+    ServerConfig c;
+    if (keepConfig && File.Exists(cfgPath))
+    {
+        c = ServerConfig.Load(cfgPath);
+        Console.WriteLine("  ✓ 保留原有配置(证书/token/配对串不变)");
+    }
+    else
+    {
+        Console.WriteLine("▶ 生成证书 + 配置 ...");
+        c = Bootstrap(cfgPath, serverName);
+    }
     c.EnsureValid();
     Console.WriteLine("  ✓ 配置就绪");
 

@@ -25,6 +25,9 @@ public sealed class RemotClient : IDisposable
 
     public IReadOnlyList<string> TargetNames => _config.Targets.Keys.ToList();
 
+    /// <summary>供 CLI 的 ping/pair-自检直接用。</summary>
+    public Grpc.Net.Client.GrpcChannel GetChannel(Target t) => _channels.Get(t);
+
     public async Task<RemotResult<IReadOnlyList<CommandResult>>> RunCommandAsync(
         string target, IReadOnlyList<string> commands, string shell = "powershell", int? timeoutMs = null,
         string? cwd = null, CancellationToken ct = default)

@@ -8,6 +8,7 @@ public sealed class ServerConfig
     private const int MinTokenLen = 32;
 
     public int Port { get; set; } = 7070;
+    public string Name { get; set; } = "";   // 服务器标识(配对串携带,客户端可识别)
     public string BindAddress { get; set; } = "0.0.0.0";
     public string Token { get; set; } = "";
     public string CertPath { get; set; } = "";

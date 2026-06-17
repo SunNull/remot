@@ -20,7 +20,8 @@ public sealed class PairTool
         try
         {
             var p = PairingString.Decode(pairing_string);
-            var t = new Target(name ?? $"target-{p.Host}", p.Host, p.Port, p.Token, p.Fingerprint);
+            var targetName = name ?? (string.IsNullOrEmpty(p.Name) ? $"target-{p.Host}" : p.Name);
+            var t = new Target(targetName, p.Host, p.Port, p.Token, p.Fingerprint);
             _client.SaveTarget(t);
             return Task.FromResult($"✓ 已登记 {t.Name} → {t.Host}:{t.Port}。可用 remot_run / remot_upload / remot_download。");
         }

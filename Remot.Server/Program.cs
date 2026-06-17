@@ -31,9 +31,11 @@ if (args.Length == 0)
     Console.WriteLine("╔══════════════════════════════════╗");
     Console.WriteLine("║      Remot 服务端安装向导        ║");
     Console.WriteLine("╚══════════════════════════════════╝");
-    Console.Write("\n将安装 Remot 服务端到本机(Windows 服务 + 防火墙 + 自签证书)。\n继续? (Y/n): ");
+    Console.Write("继续安装? (Y/n): ");
     if (!Confirm()) { Console.WriteLine("已取消。"); PauseExit(); return 0; }
-    return DoInstall(Array.Empty<string>(), cfgPath, interactive: true);
+    Console.Write("服务器名称(可选,回车=机器名): ");
+    var nameInput = Console.ReadLine()?.Trim();
+    return DoInstall(string.IsNullOrEmpty(nameInput) ? Array.Empty<string>() : new[] { "--name", nameInput }, cfgPath, interactive: true);
 }
 // 命令行模式
 {
@@ -51,7 +53,7 @@ if (args.Length == 0)
                 c.Save(cfgPath);
                 using var cert = X509CertificateLoader.LoadPkcs12(File.ReadAllBytes(c.CertPath), c.CertPassword, X509KeyStorageFlags.Exportable);
                 var fp = cert.GetCertHashString(HashAlgorithmName.SHA256).ToLowerInvariant();
-                var ps = PairingPayload.Encode(LocalLanIp() ?? Environment.MachineName, c.Port, c.Token, fp);
+                var ps = PairingPayload.Encode(LocalLanIp() ?? Environment.MachineName, c.Port, c.Token, fp, c.Name);
                 AuditLog.SavePairing(ps); ClipboardHelper.SetText(ps);
                 Console.WriteLine("Token 已轮换 —— 新配对串(剪贴板 + pairing.txt):");
                 Console.WriteLine(ps); return 0;
@@ -115,7 +117,11 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
         return 0;
     }
 
-    // 已提权:自动执行全部步骤
+    // 已提权:解析 --name → 自动执行全部步骤
+    string serverName = "";
+    for (int i = 0; i < extra.Length - 1; i++)
+        if (extra[i] == "--name") serverName = extra[i + 1];
+
     Console.WriteLine("\n▶ 安装到 C:\\Program Files\\Remot ...");
     var installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Remot");
     Directory.CreateDirectory(installDir);
@@ -124,7 +130,7 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     Console.WriteLine("  ✓ 已安装");
 
     Console.WriteLine("▶ 生成证书 + 配置 ...");
-    var c = File.Exists(cfgPath) ? ServerConfig.Load(cfgPath) : Bootstrap(cfgPath);
+    var c = File.Exists(cfgPath) ? ServerConfig.Load(cfgPath) : Bootstrap(cfgPath, serverName);
     c.EnsureValid();
     Console.WriteLine("  ✓ 配置就绪");
 
@@ -179,16 +185,17 @@ static bool IsPortListening(int port)
 static bool Confirm() => (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "y") is "" or "y" or "yes";
 static void PauseExit() { Console.WriteLine("\n按任意键退出..."); Console.ReadKey(true); }
 
-static ServerConfig Bootstrap(string cfgPath)
+static ServerConfig Bootstrap(string cfgPath, string name = "")
 {
     var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     var (cert, fingerprint) = CertGenerator.GenerateSelfSigned("remot", password);
     var certFile = Path.Combine(Path.GetDirectoryName(cfgPath)!, "server.pfx");
     File.WriteAllBytes(certFile, cert.Export(X509ContentType.Pfx, password));
     var cfg = ServerConfig.CreateNew(7070, ServerConfig.NewToken(), certFile, password);
+    cfg.Name = string.IsNullOrEmpty(name) ? Environment.MachineName : name;
     cfg.Save(cfgPath);
     var host = LocalLanIp() ?? Environment.MachineName;
-    var ps = PairingPayload.Encode(host, cfg.Port, cfg.Token, fingerprint);
+    var ps = PairingPayload.Encode(host, cfg.Port, cfg.Token, fingerprint, cfg.Name);
     AuditLog.SavePairing(ps);
     return cfg;
 }

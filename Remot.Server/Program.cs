@@ -15,13 +15,15 @@ using Remot.Server.Security;
 using Remot.Server.Services;
 using Remot.Server.Setup;
 
-// ── 双击(无参)→ 自动安装/更新服务并退出;有参数 → 命令行模式 ──
+// ── 双击(无参+交互)→ 安装向导;无参+非交互(Windows 服务)→ 服务器模式 ──
 if (args.Length == 0)
 {
+    if (!Environment.UserInteractive) goto RunServer;   // 被 SCM 启动(服务)→ 直接跑
+
     var dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Remot");
     Directory.CreateDirectory(dataDir);
     var cfgPath = Path.Combine(dataDir, "server.json");
-    // 双击 = 安装/确保服务已注册(无论是否已有配置)
+    // 双击 = 安装/确保服务已注册
     Console.WriteLine("╔══════════════════════════════════╗");
     Console.WriteLine("║      Remot 服务端安装向导        ║");
     Console.WriteLine("╚══════════════════════════════════╝");

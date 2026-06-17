@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Grpc.Core;
@@ -45,7 +46,7 @@ public sealed class TokenInterceptor : Interceptor
         if (_allowedClientIPs.Count > 0)
         {
             var ip = ExtractIp(context.Peer);
-            if (ip is null || !_allowedClientIPs.Contains(ip, StringComparer.OrdinalIgnoreCase))
+            if (ip is null || !IsAllowedIp(ip))
                 throw new RpcException(new Status(StatusCode.PermissionDenied, "ip not allowed"));
         }
 
@@ -58,9 +59,23 @@ public sealed class TokenInterceptor : Interceptor
             throw new RpcException(new Status(StatusCode.Unauthenticated, "invalid token"));
     }
 
+    private bool IsAllowedIp(string ip)
+    {
+        if (!IPAddress.TryParse(ip, out var addr)) return false;
+        // L10:IPv4-mapped IPv6 规范化为 IPv4 再比较
+        if (addr.IsIPv4MappedToIPv6) addr = addr.MapToIPv4();
+        foreach (var a in _allowedClientIPs)
+        {
+            if (!IPAddress.TryParse(a, out var allowed)) continue;
+            if (allowed.IsIPv4MappedToIPv6) allowed = allowed.MapToIPv4();
+            if (addr.Equals(allowed)) return true;
+        }
+        return false;
+    }
+
     private static string? ExtractIp(string peer)
     {
-        // gRPC Peer 格式:"ipv4:1.2.3.4:54321" / "ipv6:[::1]:54321" / "dns:host:port"
+        // gRPC Peer 格式:"ipv4:1.2.3.4:54321" / "ipv6:[::ffff:1.2.3.4]:54321" / "dns:host:port"
         if (peer.StartsWith("ipv4:", StringComparison.Ordinal))
         { var rest = peer[5..]; var c = rest.IndexOf(':'); return c < 0 ? rest : rest[..c]; }
         if (peer.StartsWith("ipv6:", StringComparison.Ordinal))

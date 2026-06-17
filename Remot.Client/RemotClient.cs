@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using Google.Protobuf;
 using Grpc.Core;
 using Remot.Client.Channels;
 using Remot.Client.Config;
+using Remot.Client.Files;
 using Remot.Protocol;
 
 namespace Remot.Client;
@@ -11,8 +11,6 @@ namespace Remot.Client;
 /// <summary>高层客户端:封装目标配置 + gRPC 调用,统一 RemotResult 返回(不抛异常给调用方)。</summary>
 public sealed class RemotClient : IDisposable
 {
-    private const int ChunkSize = 2 * 1024 * 1024;
-
     private readonly ChannelManager _channels = new();
     private readonly TargetsConfig _config;
     private readonly string _configPath;
@@ -73,27 +71,17 @@ public sealed class RemotClient : IDisposable
                 try
                 {
                     var (src, dst) = item.File;
-                    // M13:单次读入内存,作为哈希与分块的同一来源(避免双开文件的 TOCTOU)。
-                    var bytes = await File.ReadAllBytesAsync(src, ict);
-                    string sha;
-                    using (var sha256 = SHA256.Create())
-                        sha = Convert.ToHexString(await sha256.ComputeHashAsync(new MemoryStream(bytes), ict)).ToLowerInvariant();
-
+                    var chunker = new FileChunker();
+                    // H4:流式哈希(零全量缓冲,大文件不 OOM),替代整文件读入内存
+                    var (sha, size) = await chunker.HashAsync(src, ict);
                     var check = await stub.CheckFileAsync(
-                        new FileCheckRequest { DestPath = dst, Size = bytes.Length, Sha256 = sha }, headers: meta, cancellationToken: ict);
+                        new FileCheckRequest { DestPath = dst, Size = size, Sha256 = sha }, headers: meta, cancellationToken: ict);
                     if (check.Matches)
-                    { results.Add((item.Index, new TransferResult { Ok = true, Dest = dst, Bytes = bytes.Length })); return; }
+                    { results.Add((item.Index, new TransferResult { Ok = true, Dest = dst, Bytes = size })); return; }
 
                     using var upload = stub.Upload(headers: meta, cancellationToken: ict);
-                    await upload.RequestStream.WriteAsync(new FileChunk
-                    {
-                        Header = new FileHeader { DestPath = dst, ExpectedSha256 = sha, Size = bytes.Length, Overwrite = true }
-                    }, ict);
-                    for (int off = 0; off < bytes.Length; off += ChunkSize)
-                    {
-                        int len = Math.Min(ChunkSize, bytes.Length - off);
-                        await upload.RequestStream.WriteAsync(new FileChunk { Data = ByteString.CopyFrom(bytes, off, len) }, ict);
-                    }
+                    await foreach (var chunk in chunker.StreamAsync(src, dst, sha, size, ict))
+                        await upload.RequestStream.WriteAsync(chunk, ict);
                     await upload.RequestStream.CompleteAsync();
                     results.Add((item.Index, await upload.ResponseAsync));
                 }
@@ -131,7 +119,7 @@ public sealed class RemotClient : IDisposable
                 }
             }
 
-            // H4:完整性校验
+            // H4:完整性校验。FileSender 现在总会先发 Header(含 sha);若缺失说明协议异常。
             if (expectedSha is not null)
             {
                 string actual;

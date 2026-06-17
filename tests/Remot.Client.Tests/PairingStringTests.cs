@@ -23,4 +23,12 @@ public class PairingStringTests
     {
         Assert.Throws<FormatException>(() => PairingString.Decode("http://nope#x"));
     }
+
+    [Fact]
+    public void Empty_required_fields_throw()   // M9
+    {
+        var json = "{\"name\":\"\",\"host\":\"\",\"port\":7070,\"token\":\"\",\"fingerprint\":\"\"}";
+        var bad = "remot://pair#" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
+        Assert.Throws<FormatException>(() => PairingString.Decode(bad));
+    }
 }

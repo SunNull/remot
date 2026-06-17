@@ -46,7 +46,12 @@ if (args.Length == 0)
     if (!Confirm()) { Console.WriteLine("已取消。"); PauseExit(); return 0; }
     Console.Write("服务器名称(可选,回车=机器名): ");
     var nameInput = Console.ReadLine()?.Trim();
-    return DoInstall(string.IsNullOrEmpty(nameInput) ? Array.Empty<string>() : new[] { "--name", nameInput }, cfgPath, interactive: true);
+    Console.Write("允许文件操作的根目录(逗号分隔,留空=不限制。⚠ 留空=认证后可读写服务账户可达的任意路径): ");
+    var rootsInput = Console.ReadLine()?.Trim();
+    var installArgs = new List<string>();
+    if (!string.IsNullOrEmpty(nameInput)) installArgs.AddRange(new[] { "--name", nameInput });
+    if (!string.IsNullOrEmpty(rootsInput)) installArgs.AddRange(new[] { "--roots", rootsInput });
+    return DoInstall(installArgs.ToArray(), cfgPath, interactive: true);
 }
 // 命令行模式
 {
@@ -62,7 +67,7 @@ if (args.Length == 0)
                 c.EnsureValid();
                 c.Token = ServerConfig.NewToken();
                 c.Save(cfgPath);
-                using var cert = X509CertificateLoader.LoadPkcs12(File.ReadAllBytes(c.CertPath), c.CertPassword, X509KeyStorageFlags.Exportable);
+                using var cert = X509CertificateLoader.LoadPkcs12(File.ReadAllBytes(c.CertPath), c.CertPassword);   // L2:服务端无需导出私钥
                 var fp = cert.GetCertHashString(HashAlgorithmName.SHA256).ToLowerInvariant();
                 var ps = PairingPayload.Encode(LocalLanIp() ?? Environment.MachineName, c.Port, c.Token, fp, c.Name);
                 AuditLog.SavePairing(ps); ClipboardHelper.SetText(ps);
@@ -78,8 +83,21 @@ RunServer:;
 var _dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Remot");
 Directory.CreateDirectory(_dataDir);
 var _cfgPath = Path.Combine(_dataDir, "server.json");
-var cfg = ServerConfig.Load(_cfgPath);
-cfg.EnsureValid();
+ServerConfig cfg;
+try { cfg = ServerConfig.Load(_cfgPath); }
+catch (Exception ex)   // L12:配置缺失/损坏给友好提示,而非裸异常崩溃
+{
+    Console.Error.WriteLine($"加载配置失败:{ex.Message}");
+    AuditLog.Log($"启动失败:加载配置 - {ex.Message}");
+    return 1;
+}
+try { cfg.EnsureValid(); }
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    AuditLog.Log($"启动失败:配置校验 - {ex.Message}");
+    return 1;
+}
 {
     var builder = WebApplication.CreateBuilder();
     builder.Services.AddWindowsService(o => o.ServiceName = ServiceInstaller.ServiceName);
@@ -132,8 +150,12 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     // 已提权:解析参数
     bool keepConfig = extra.Contains("--keep-config");
     string serverName = "";
+    string? roots = null;
     for (int i = 0; i < extra.Length - 1; i++)
+    {
         if (extra[i] == "--name") serverName = extra[i + 1];
+        else if (extra[i] == "--roots") roots = extra[i + 1];
+    }
 
     try
     {
@@ -157,7 +179,7 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     else
     {
         Console.WriteLine("▶ 生成证书 + 配置 ...");
-        c = Bootstrap(cfgPath, serverName);
+        c = Bootstrap(cfgPath, serverName, roots);
     }
     c.EnsureValid();
     Console.WriteLine("  ✓ 配置就绪");
@@ -221,13 +243,17 @@ static bool Confirm() => (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "y") 
 static bool ConfirmDefaultNo() => (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "n") is "y" or "yes";
 static void PauseExit() { Console.WriteLine("\n按任意键退出..."); Console.ReadKey(true); }
 
-static ServerConfig Bootstrap(string cfgPath, string name = "")
+static ServerConfig Bootstrap(string cfgPath, string name = "", string? roots = null)
 {
     var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     var (cert, fingerprint) = CertGenerator.GenerateSelfSigned("remot", password);
     var certFile = Path.Combine(Path.GetDirectoryName(cfgPath)!, "server.pfx");
     File.WriteAllBytes(certFile, cert.Export(X509ContentType.Pfx, password));
-    var cfg = ServerConfig.CreateNew(7070, ServerConfig.NewToken(), certFile, password);
+    // S1:把向导收集的根目录写入配置(留空=不限制,EnsureValid 会记审计警告)
+    var allowed = string.IsNullOrWhiteSpace(roots)
+        ? new List<string>()
+        : roots.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+    var cfg = ServerConfig.CreateNew(7070, ServerConfig.NewToken(), certFile, password, allowed);
     cfg.Name = string.IsNullOrEmpty(name) ? Environment.MachineName : name;
     cfg.Save(cfgPath);
     var host = LocalLanIp() ?? Environment.MachineName;
@@ -237,7 +263,7 @@ static ServerConfig Bootstrap(string cfgPath, string name = "")
 }
 
 static X509Certificate2 LoadCert(ServerConfig cfg) =>
-    X509CertificateLoader.LoadPkcs12(File.ReadAllBytes(cfg.CertPath), cfg.CertPassword, X509KeyStorageFlags.Exportable);
+    X509CertificateLoader.LoadPkcs12(File.ReadAllBytes(cfg.CertPath), cfg.CertPassword);   // L2:服务端无需导出私钥
 
 static string? LocalLanIp() =>
     NetworkInterface.GetAllNetworkInterfaces()

@@ -12,7 +12,7 @@ service RemotService {
 
 message CommandRequest {
   repeated Command commands = 1;
-  string shell = 2;                 // "pwsh"|"powershell"|"cmd",默认 pwsh
+  string shell = 2;                 // "pwsh"|"powershell"|"cmd";空值由服务端回退为 powershell
   string cwd = 3;
   map<string,string> env = 4;
   int32 timeout_ms = 5;            // 单条命令超时

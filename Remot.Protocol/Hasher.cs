@@ -11,14 +11,4 @@ public sealed class Hasher
         var hash = await sha.ComputeHashAsync(s, ct);
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
-
-    public async Task<(string Sha256, long Size)> OfAsync(string path)
-    {
-        await using var fs = File.OpenRead(path);
-        using var sha = SHA256.Create();
-        var hash = await sha.ComputeHashAsync(fs);
-        return (Convert.ToHexString(hash).ToLowerInvariant(), new FileInfo(path).Length);
-    }
-
-    public string ToHex(byte[] hash) => Convert.ToHexString(hash).ToLowerInvariant();
 }

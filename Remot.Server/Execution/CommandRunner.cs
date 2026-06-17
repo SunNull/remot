@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Threading.Channels;
 
 namespace Remot.Server.Execution;
 
@@ -24,16 +25,24 @@ public sealed class CommandRunner : ICommandRunner
         var stdoutBuf = new OutputAccumulator(spec.MaxOutputBytes);
         var stderrBuf = new OutputAccumulator(spec.MaxOutputBytes);
 
-        // L4:MergeStreams 时把 stderr 并入 stdout(缓冲与流式均合并)
-        void OnLine(string? line, bool isStderr)
+        // H1/M2:stdout/stderr 在不同 ThreadPool 线程上回调,若直接 await stream.WriteAsync
+        // 或 Append 同一 StringBuilder 会并发(gRPC IServerStreamWriter 仅允许单写,会抛异常/帧交错)。
+        // 用一个 Channel 把所有行汇到单消费者顺序处理,彻底消除并发写入。
+        var channel = Channel.CreateUnbounded<StreamLine>(new UnboundedChannelOptions { SingleReader = true });
+        var consumer = Task.Run(async () =>
         {
-            if (line is null) { (isStderr ? stderrEof : stdoutEof).TrySetResult(); return; }
-            bool asStderr = isStderr && !spec.MergeStreams;
-            (asStderr ? stderrBuf : stdoutBuf).Append(line);
-            if (onLine is not null)
+            await foreach (var line in channel.Reader.ReadAllAsync())
             {
-                try { onLine(new StreamLine(asStderr, line)).GetAwaiter().GetResult(); } catch { }
+                (line.IsStderr ? stderrBuf : stdoutBuf).Append(line.Line);
+                if (onLine is not null)
+                    try { await onLine(line); } catch { }
             }
+        });
+
+        void OnLine(string? data, bool isStderr)
+        {
+            if (data is null) { (isStderr ? stderrEof : stdoutEof).TrySetResult(); return; }
+            channel.Writer.TryWrite(new StreamLine(isStderr && !spec.MergeStreams, data));
         }
         proc.OutputDataReceived += (_, e) => OnLine(e.Data, isStderr: false);
         proc.ErrorDataReceived += (_, e) => OnLine(e.Data, isStderr: true);
@@ -64,8 +73,13 @@ public sealed class CommandRunner : ICommandRunner
             try { await proc.WaitForExitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); } catch { }
         }
 
+        // 排空异步输出管道:进程退出后,OutputDataReceived 回调可能仍在路上。
         try { await Task.WhenAll(stdoutEof.Task, stderrEof.Task).WaitAsync(DrainTimeout); }
         catch { }
+
+        // 关闭 Channel,等单消费者处理完剩余行后退出 —— 此时无并发,stream 写入安全。
+        channel.Writer.TryComplete();
+        try { await consumer.WaitAsync(DrainTimeout); } catch { }
 
         sw.Stop();
         return new CommandRunResult(

@@ -20,13 +20,14 @@ public sealed class ProcessFactory : IProcessFactory
             // 完整修复需 CREATE_SUSPENDED + P/Invoke CreateProcess,代价大;当前「启动后立即挂入 job」
             // + KillEntireTree 的 entireProcessTree 回退已把实际风险降到极低,按权衡保留该残余。
             JobObject? job = null;
-            var jo = new JobObject();
+            JobObject? jo = null;
             try
             {
-                if (!jo.Assign(p.Handle)) { jo.Dispose(); }   // M2:Assign 失败时 Dispose,避免内核句柄泄漏
+                jo = new JobObject();   // M3:构造放进 try,非 Windows/无权限时降级,而非让整个 Start 失败
+                if (!jo.Assign(p.Handle)) { jo.Dispose(); jo = null; }   // M2:Assign 失败时 Dispose,避免内核句柄泄漏
                 else job = jo;
             }
-            catch { jo.Dispose(); }
+            catch { jo?.Dispose(); }
             return ProcessAdapter.Create(p, job);
         }
         catch (Exception ex)

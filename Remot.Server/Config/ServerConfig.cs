@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -41,14 +42,26 @@ public sealed class ServerConfig
     /// <summary>C6 缓解:为空=不限;配置后仅这些 IP 的客户端可用 token。</summary>
     public List<string> AllowedClientIPs { get; set; } = new();
 
-    public static ServerConfig CreateNew(int port, string token, string certPath, string certPassword) =>
-        new() { Port = port, Token = token, CertPath = certPath, CertPassword = certPassword };
+    public static ServerConfig CreateNew(int port, string token, string certPath, string certPassword,
+        IEnumerable<string>? allowedBasePaths = null)
+    {
+        var c = new ServerConfig { Port = port, Token = token, CertPath = certPath, CertPassword = certPassword };
+        if (allowedBasePaths is not null) c.AllowedBasePaths = allowedBasePaths.ToList();
+        return c;
+    }
 
     public static ServerConfig Load(string path)
     {
-        var cfg = JsonSerializer.Deserialize<ServerConfig>(File.ReadAllText(path));
-        if (cfg is null) throw new InvalidOperationException($"无法解析配置: {path}");
-        return cfg;
+        try
+        {
+            var cfg = JsonSerializer.Deserialize<ServerConfig>(File.ReadAllText(path));
+            if (cfg is null) throw new InvalidOperationException($"无法解析配置: {path}");
+            return cfg;
+        }
+        catch (JsonException ex)   // M8:损坏 json 给出友好提示而非裸 JsonException
+        {
+            throw new InvalidOperationException($"配置文件损坏({path}),请删除后重新初始化。", ex);
+        }
     }
 
     public void EnsureValid()
@@ -56,6 +69,20 @@ public sealed class ServerConfig
         if (string.IsNullOrWhiteSpace(Token) || Token.Length < MinTokenLen)
             throw new InvalidOperationException(
                 $"Token 无效(为空或少于 {MinTokenLen} 字符)。请删除 server.json 重新初始化。");
+        if (Port < 1 || Port > 65535)   // M4
+            throw new InvalidOperationException($"Port 无效:{Port}(需 1-65535)。");
+        // M4:BindAddress 可解析(0.0.0.0/* 表示全部)
+        if (!string.IsNullOrWhiteSpace(BindAddress) && BindAddress is not "0.0.0.0" and not "*")
+        {
+            try { IPAddress.Parse(BindAddress); }
+            catch (Exception ex) { throw new InvalidOperationException($"BindAddress 无法解析:{BindAddress}", ex); }
+        }
+        if (!File.Exists(CertPath))   // M4
+            throw new InvalidOperationException($"证书文件不存在:{CertPath}。请删除 server.json 重新初始化。");
+
+        // S1:AllowedBasePaths 为空 = 认证后可读写全盘。不阻止启动(保持兼容),但记审计警告。
+        if (AllowedBasePaths.Count == 0)
+            AuditLog.Log("⚠ 安全提示:AllowedBasePaths 为空 —— 认证后客户端可读写服务账户可达的任意路径。建议在 server.json 配置 AllowedBasePaths 限定根目录。");
     }
 
     public void Save(string path)

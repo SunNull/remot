@@ -22,6 +22,8 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
     public override async Task RunCommand(CommandRequest request,
         IServerStreamWriter<CommandOutput> stream, ServerCallContext context)
     {
+        if (request.Commands.Count == 0)   // L11:空命令显式报错,而非静默无返回
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "commands 为空"));
         var shell = string.IsNullOrEmpty(request.Shell) ? "powershell" : request.Shell;
         if (!AllowedShells.Contains(shell))   // H9:白名单
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"不支持的 shell: {shell}"));
@@ -92,10 +94,14 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
     public override async Task Download(
         FileRequest request, IServerStreamWriter<FileChunk> stream, ServerCallContext context)
     {
-        // C2:文件存在性;M6:NotFound 不回传路径
-        if (!File.Exists(request.Path))
+        // L5:路径越界 → PermissionDenied(而非 Internal);C2:不存在 → NotFound(不回传路径)
+        string safe;
+        try { safe = PathValidator.Validate(request.Path, _config.AllowedBasePaths); }
+        catch (UnauthorizedAccessException) { throw new RpcException(new Status(StatusCode.PermissionDenied, "access denied")); }
+        catch (ArgumentException) { throw new RpcException(new Status(StatusCode.InvalidArgument, "invalid path")); }
+        if (!File.Exists(safe))
             throw new RpcException(new Status(StatusCode.NotFound, "file not found"));
-        await _sender.SendAsync(request.Path, stream, context.CancellationToken);
+        await _sender.SendAsync(safe, stream, context.CancellationToken);
     }
 
     public override async Task<FileCheckResponse> CheckFile(

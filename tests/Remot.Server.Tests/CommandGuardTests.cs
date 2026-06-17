@@ -55,4 +55,27 @@ public class CommandGuardTests
         Assert.Null(CommandGuard.Check("shutdown /r"));
         Assert.Null(CommandGuard.Check("format C:"));
     }
+
+    [Theory]
+    [InlineData("sc.exe stop RemotServer")]        // H2:sc.exe 不被 \bsc\s+ 命中,靠服务保护
+    [InlineData("net stop RemotServer")]
+    [InlineData("Stop-Service RemotServer")]
+    [InlineData("Set-Service RemotServer -Status Stopped")]
+    public void Service_protection_covers_bypasses(string cmd)
+    {
+        var result = CommandGuard.Check(cmd, DefaultBlocked, DefaultProtectedServices, DefaultProtectedPaths);
+        Assert.NotNull(result);
+        Assert.Contains("受保护", result);
+    }
+
+    [Theory]
+    [InlineData("Remove-Item -Path C:\\Windows\\System32\\evil.dll")]   // H2:-Path 参数
+    [InlineData("Remove-Item C:/Windows/System32/evil.dll")]            // H2:正斜杠
+    [InlineData("del C:\\Program Files\\foo")]                          // 多盘符前缀
+    public void Path_protection_covers_bypasses(string cmd)
+    {
+        var result = CommandGuard.Check(cmd, DefaultBlocked, DefaultProtectedServices, DefaultProtectedPaths);
+        Assert.NotNull(result);
+        Assert.Contains("受保护", result);
+    }
 }

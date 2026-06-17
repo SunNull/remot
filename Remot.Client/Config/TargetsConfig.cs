@@ -8,8 +8,12 @@ public sealed class TargetsConfig
 {
     public Dictionary<string, TargetDto> Targets { get; set; } = new();
 
-    public static TargetsConfig Load(string path) =>
-        File.Exists(path) ? (JsonSerializer.Deserialize<TargetsConfig>(File.ReadAllText(path)) ?? new()) : new();
+    public static TargetsConfig Load(string path)
+    {
+        if (!File.Exists(path)) return new();
+        try { return JsonSerializer.Deserialize<TargetsConfig>(File.ReadAllText(path)) ?? new(); }
+        catch (JsonException) { return new(); }   // M8:损坏 json 不崩,返回空配置
+    }
 
     /// <summary>H6 原子写(临时文件 + Move);C4 Windows 上收紧 ACL 仅当前用户(防止其他用户读到 token)。</summary>
     public void Save(string path)

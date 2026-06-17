@@ -13,20 +13,20 @@ public sealed class FileSender
     public FileSender(Hasher hasher, IReadOnlyList<string>? allowedBasePaths = null)
     { _hasher = hasher; _allowedBasePaths = allowedBasePaths ?? Array.Empty<string>(); }
 
-    /// <summary>把文件分块流式写出到 gRPC 下载流。H4:先发 FileHeader(含 size+sha256),客户端据此校验完整性。</summary>
+    /// <summary>把文件分块流式写出到 gRPC 下载流。H4:先发 FileHeader(含 size+sha256),客户端据此校验完整性。
+    /// L4:单次打开文件 —— 先算 sha(seek 回 0),再分块读发送,避免双开文件 TOCTOU。</summary>
     public async Task SendAsync(string path, IServerStreamWriter<FileChunk> stream, CancellationToken ct)
     {
         path = PathValidator.Validate(path, _allowedBasePaths);   // C2:下载路径校验
-        var info = new FileInfo(path);
-        string sha;
-        await using (var hashFs = info.OpenRead())
-            sha = await _hasher.Sha256Async(hashFs, ct);
+        await using var fs = File.OpenRead(path);
+        var size = fs.Length;
+        var sha = await _hasher.Sha256Async(fs, ct);
         await stream.WriteAsync(new FileChunk
         {
-            Header = new FileHeader { DestPath = path, Size = info.Length, ExpectedSha256 = sha }
+            Header = new FileHeader { DestPath = path, Size = size, ExpectedSha256 = sha }
         }, ct);
 
-        await using var fs = info.OpenRead();
+        fs.Position = 0;   // 回到起点,开始分块发送
         var buf = new byte[ChunkSize];
         int n;
         while ((n = await fs.ReadAsync(buf, ct)) > 0)

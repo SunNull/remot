@@ -45,4 +45,86 @@ public class FileReceiverTests
         Assert.False(File.Exists(dest));
         Directory.Delete(dir, true);
     }
+
+    [Fact]
+    public async Task Empty_file_zero_bytes_succeeds()   // H3/H5:0 字节文件能传
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "remot-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var dest = Path.Combine(dir, "empty.bin");
+        var header = new FileHeader { DestPath = dest, ExpectedSha256 = "", Size = 0, Overwrite = true };
+
+        var r = await new FileReceiver(new Hasher()).ReceiveAsync(Chunks(header));
+
+        Assert.True(r.Ok);
+        Assert.True(File.Exists(dest));
+        Assert.Empty(await File.ReadAllBytesAsync(dest));
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public async Task Negative_size_rejected()   // H3
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "remot-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var dest = Path.Combine(dir, "x.bin");
+        var header = new FileHeader { DestPath = dest, Size = -1, Overwrite = true };
+
+        var r = await new FileReceiver(new Hasher()).ReceiveAsync(Chunks(header));
+
+        Assert.False(r.Ok);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public async Task Nonempty_without_sha256_rejected()   // H3:Size>0 必须带 sha
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "remot-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var dest = Path.Combine(dir, "x.bin");
+        var data = new byte[] { 1, 2, 3, 4 };
+        var header = new FileHeader { DestPath = dest, ExpectedSha256 = "", Size = data.Length, Overwrite = true };
+
+        var r = await new FileReceiver(new Hasher()).ReceiveAsync(Chunks(header, data));
+
+        Assert.False(r.Ok);
+        Assert.Contains("sha256", r.Error);
+        Assert.False(File.Exists(dest));
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public async Task Size_mismatch_rejected()   // H3
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "remot-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var dest = Path.Combine(dir, "x.bin");
+        var data = new byte[] { 1, 2, 3, 4 };
+        var header = new FileHeader { DestPath = dest, ExpectedSha256 = "abcd", Size = 10, Overwrite = true };
+
+        var r = await new FileReceiver(new Hasher()).ReceiveAsync(Chunks(header, data));
+
+        Assert.False(r.Ok);
+        Assert.Contains("大小不匹配", r.Error);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public async Task Overwrite_false_with_existing_dest_rejected()   // M6
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "remot-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        var dest = Path.Combine(dir, "x.bin");
+        await File.WriteAllBytesAsync(dest, new byte[] { 9 });
+        var data = new byte[] { 1, 2, 3, 4 };
+        var sha = await new Hasher().Sha256Async(new MemoryStream(data));
+        var header = new FileHeader { DestPath = dest, ExpectedSha256 = sha, Size = data.Length, Overwrite = false };
+
+        var r = await new FileReceiver(new Hasher()).ReceiveAsync(Chunks(header, data));
+
+        Assert.False(r.Ok);
+        Assert.Contains("overwrite", r.Error);
+        Assert.Equal(new byte[] { 9 }, await File.ReadAllBytesAsync(dest));   // 原文件保留
+        Directory.Delete(dir, true);
+    }
 }

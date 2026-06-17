@@ -14,12 +14,30 @@ public sealed class ServerConfig
     public string CertPath { get; set; } = "";
     public string CertPassword { get; set; } = "";
     public List<string> AllowedBasePaths { get; set; } = new();
-    /// <summary>自定义命令黑名单(正则,命中即拦截)。内置黑名单不可关闭。</summary>
-    public List<string> BlockedCommands { get; set; } = new();
-    /// <summary>受保护的服务名(禁止 stop/delete),默认含 RemotServer。</summary>
-    public List<string> ProtectedServices { get; set; } = new();
-    /// <summary>受保护的路径(禁止删除),默认含系统关键目录。</summary>
-    public List<string> ProtectedPaths { get; set; } = new();
+    /// <summary>命令黑名单(正则,空=不拦截任何命令)。</summary>
+    public List<string> BlockedCommands { get; set; } = new()
+    {
+        // 默认配置(可删可改)
+        @"\bshutdown\b", @"\brestart-computer\b", @"\bstop-computer\b",
+        @"\bformat\b\s+[a-z]:",
+        @"\breg\s+delete\b", @"remove-item.*HKLM:\\", @"remove-item.*HKCU:\\",
+        @"\bnet\s+user\b.*\S+\s+\S", @"\bnet\s+localgroup\b",
+        @"\bsc\s+delete\b", @"\bsc\s+create\b", @"\bremove-service\b",
+        @"\bdel\s+/[sSq].*\\\*", @"\brmdir\s+/[sS].*\\\*", @"remove-item\s+.*-recurse.*\\\*",
+        @"\biex\b.*\birm\b", @"\biex\b.*\binvoke-webrequest\b",
+        @"\bcurl\b.*\|\s*(bash|sh|pwsh|powershell)",
+        @"\bschtasks\s+/create\b", @"register-scheduledtask\b",
+        @"\bregsvr32\b", @"\bdiskpart\b", @"\bbcdedit\b",
+    };
+    /// <summary>受保护的服务名(禁止 stop/delete)。</summary>
+    public List<string> ProtectedServices { get; set; } = new() { "RemotServer" };
+    /// <summary>受保护的路径(禁止删除)。</summary>
+    public List<string> ProtectedPaths { get; set; } = new()
+    {
+        @"C:\Windows\System32", @"C:\Windows\SysWOW64",
+        @"C:\Program Files", @"C:\Program Files (x86)",
+        @"C:\ProgramData\Remot",
+    };
     /// <summary>C6 缓解:为空=不限;配置后仅这些 IP 的客户端可用 token。</summary>
     public List<string> AllowedClientIPs { get; set; } = new();
 

@@ -32,8 +32,26 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
 
         for (int i = 0; i < request.Commands.Count; i++)
         {
+            var cmdText = request.Commands[i].Text;
+
+            // 危险命令拦截(方案 A:黑名单 + 服务/路径保护)
+            var blockReason = Remot.Server.Security.CommandGuard.Check(cmdText);
+            if (blockReason is not null)
+            {
+                AuditLog.Log($"⛔ BLOCKED: {blockReason} | cmd: {Truncate(cmdText, 100)}");
+                await stream.WriteAsync(new CommandOutput
+                {
+                    Result = new CommandResult
+                    {
+                        Index = i, ExitCode = -1, Stdout = "", Stderr = "",
+                        DurationMs = 0, TimedOut = false, Error = blockReason
+                    }
+                });
+                continue;   // 拦截这条,继续下一条
+            }
+
             var spec = new CommandSpec(
-                Text: request.Commands[i].Text,
+                Text: cmdText,
                 Shell: shell,
                 Cwd: string.IsNullOrEmpty(request.Cwd) ? null : request.Cwd,
                 Env: request.Env,
@@ -60,6 +78,8 @@ public sealed class RemotServiceImpl : RemotService.RemotServiceBase
             });
         }
     }
+
+    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
 
     public override async Task<TransferResult> Upload(
         IAsyncStreamReader<FileChunk> requestStream, ServerCallContext context)

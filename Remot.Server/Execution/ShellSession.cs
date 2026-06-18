@@ -39,9 +39,9 @@ internal sealed class ShellSession : IDisposable
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            StandardInputEncoding = Encoding.UTF8,
+            StandardOutputEncoding = new UTF8Encoding(false),  // 无 BOM,避免首行 $ 被乱码
+            StandardErrorEncoding = new UTF8Encoding(false),
+            StandardInputEncoding = new UTF8Encoding(false),    // 无 BOM
             CreateNoWindow = true,
             WorkingDirectory = string.IsNullOrEmpty(cwd) ? Environment.CurrentDirectory : cwd!,
         };
@@ -86,9 +86,16 @@ internal sealed class ShellSession : IDisposable
             var seq = Interlocked.Increment(ref _seq);
             var sentinel = $"__REMOT_END_{seq}__";
 
-            // cmd 会话也用 powershell 引擎(避免 cmd /K stdin 问题),命令原样透传
-            SafeWriteLine("$LASTEXITCODE = $null");
-            SafeWriteLine(command);
+            // cmd 会话:命令用 cmd /c 包裹(支持 && 等 cmd 语法),退出码通过 $LASTEXITCODE 取
+            if (_shell == "cmd")
+            {
+                SafeWriteLine($"cmd /c \"{command}\"");
+            }
+            else
+            {
+                SafeWriteLine("$LASTEXITCODE = $null");
+                SafeWriteLine(command);
+            }
             SafeWriteLine($"$remot_ec = if (-not $?) {{ 1 }} elseif ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 0 }}; Write-Output ('{sentinel}:' + $remot_ec)");
 
             var sw = Stopwatch.StartNew();

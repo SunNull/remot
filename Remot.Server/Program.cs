@@ -162,7 +162,7 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     {
     Console.WriteLine("\n▶ 停止旧服务 ...");
     try { var psi = new System.Diagnostics.ProcessStartInfo("sc.exe", $"stop {ServiceInstaller.ServiceName}") { UseShellExecute = false, CreateNoWindow = true }; System.Diagnostics.Process.Start(psi)?.WaitForExit(); } catch { }
-    for (int i = 0; i < 20; i++)
+    for (int i = 0; i < 30; i++)
     {
         Thread.Sleep(500);
         try
@@ -175,6 +175,15 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
         }
         catch { }
     }
+    // 保底:如果 sc stop 15 秒还没停(可能有挂死的 handler),直接杀进程
+    try
+    {
+        var psi3 = new System.Diagnostics.ProcessStartInfo("taskkill", $"/F /IM Remot.Server.exe")
+        { UseShellExecute = false, CreateNoWindow = true };
+        System.Diagnostics.Process.Start(psi3)?.WaitForExit();
+        Thread.Sleep(500);
+    }
+    catch { }
 
     Console.WriteLine("▶ 安装到 C:\\Program Files\\Remot ...");
     var installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Remot");

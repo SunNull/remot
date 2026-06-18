@@ -162,7 +162,19 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     {
     Console.WriteLine("\n▶ 停止旧服务 ...");
     try { var psi = new System.Diagnostics.ProcessStartInfo("sc.exe", $"stop {ServiceInstaller.ServiceName}") { UseShellExecute = false, CreateNoWindow = true }; System.Diagnostics.Process.Start(psi)?.WaitForExit(); } catch { }
-    Thread.Sleep(1000);
+    for (int i = 0; i < 20; i++)
+    {
+        Thread.Sleep(500);
+        try
+        {
+            var psi2 = new System.Diagnostics.ProcessStartInfo("sc.exe", $"query {ServiceInstaller.ServiceName}")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+            var p = System.Diagnostics.Process.Start(psi2);
+            p?.WaitForExit();
+            if ((p?.StandardOutput.ReadToEnd() ?? "").Contains("STOPPED")) break;
+        }
+        catch { }
+    }
 
     Console.WriteLine("▶ 安装到 C:\\Program Files\\Remot ...");
     var installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Remot");

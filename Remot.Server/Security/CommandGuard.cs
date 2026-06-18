@@ -67,8 +67,21 @@ public static class CommandGuard
                 foreach (var p in protectedPaths)
                 {
                     if (string.IsNullOrWhiteSpace(p)) continue;
-                    if (normalized.Contains(p, StringComparison.OrdinalIgnoreCase))
-                        return $"⛔ 拦截:路径 '{p}' 受保护";
+                    var pn = p.Replace('/', '\\');
+                    // BUG-6:Contains + 边界检查(匹配位置前不能是字母/数字/:\,防子串误匹配)
+                    int pos = 0;
+                    while ((pos = normalized.IndexOf(pn, pos, StringComparison.OrdinalIgnoreCase)) >= 0)
+                    {
+                        bool okBefore = pos == 0 ||
+                            (!char.IsLetterOrDigit(normalized[pos - 1]) &&
+                             normalized[pos - 1] != '\\' && normalized[pos - 1] != ':');
+                        int after = pos + pn.Length;
+                        bool okAfter = after >= normalized.Length ||
+                            normalized[after] == '\\' || normalized[after] == ':' || normalized[after] == '"';
+                        if (okBefore && okAfter)
+                            return $"⛔ 拦截:路径 '{p}' 受保护";
+                        pos++;
+                    }
                 }
             }
         }

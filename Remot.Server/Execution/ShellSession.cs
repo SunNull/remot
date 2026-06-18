@@ -77,6 +77,9 @@ internal sealed class ShellSession : IDisposable
         {
             if (_disposed || _proc.HasExited) return new CommandRunResult(-1, "", "", 0, false, "session 进程已退出");
 
+            // BUG-3:发命令前排空 channel 残留(上条命令的延迟输出),避免归到本条
+            while (_channel.Reader.TryRead(out _)) { }
+
             var seq = Interlocked.Increment(ref _seq);
             var sentinel = $"__REMOT_END_{seq}__";
 
@@ -106,7 +109,12 @@ internal sealed class ShellSession : IDisposable
                         found = true;
                         break;
                     }
-                    if (isStderr) stderr.AppendLine(line);
+                    if (isStderr)
+                    {
+                        stderr.AppendLine(line);
+                        // BUG-2:stderr 也流式推送
+                        if (onLine is not null) try { await onLine(new StreamLine(true, line)); } catch { }
+                    }
                     else
                     {
                         stdout.AppendLine(line);

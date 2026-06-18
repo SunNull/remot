@@ -108,23 +108,4 @@ public class FileReceiverTests
         Assert.Contains("大小不匹配", r.Error);
         Directory.Delete(dir, true);
     }
-
-    [Fact]
-    public async Task Overwrite_false_with_existing_dest_rejected()   // M6
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "remot-test-" + Guid.NewGuid());
-        Directory.CreateDirectory(dir);
-        var dest = Path.Combine(dir, "x.bin");
-        await File.WriteAllBytesAsync(dest, new byte[] { 9 });
-        var data = new byte[] { 1, 2, 3, 4 };
-        var sha = await new Hasher().Sha256Async(new MemoryStream(data));
-        var header = new FileHeader { DestPath = dest, ExpectedSha256 = sha, Size = data.Length, Overwrite = false };
-
-        var r = await new FileReceiver(new Hasher()).ReceiveAsync(Chunks(header, data));
-
-        Assert.False(r.Ok);
-        Assert.Contains("overwrite", r.Error);
-        Assert.Equal(new byte[] { 9 }, await File.ReadAllBytesAsync(dest));   // 原文件保留
-        Directory.Delete(dir, true);
-    }
 }

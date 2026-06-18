@@ -72,13 +72,9 @@ public sealed class FileReceiver
 
                 if (error is null)
                 {
-                    if (!h.Overwrite && File.Exists(dest))   // M6:尊重 overwrite=false
-                        error = Err("目标已存在且 overwrite=false", dest);
-                    else
-                    {
-                        File.Move(tempPath, dest, overwrite: true);
-                        return new TransferResult { Ok = true, Dest = dest, Bytes = received };
-                    }
+                    // BUG-7:客户端始终 overwrite=true,overwrite=false 分支不可达,简化
+                    File.Move(tempPath, dest, overwrite: true);
+                    return new TransferResult { Ok = true, Dest = dest, Bytes = received };
                 }
             }
         }

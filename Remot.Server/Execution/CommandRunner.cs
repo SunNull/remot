@@ -96,40 +96,46 @@ public sealed class CommandRunner : ICommandRunner
         }
         using var _ = proc;
 
-        var bufs = specs.Select(_ => new OutputAccumulator(first.MaxOutputBytes)).ToList();
+        // BUG-1:channel 加 IsStderr 标记,不再丢失 stderr
+        var outBufs = specs.Select(_ => new OutputAccumulator(first.MaxOutputBytes)).ToList();
+        var errBufs = specs.Select(_ => new OutputAccumulator(first.MaxOutputBytes)).ToList();
         var codes = new int[specs.Count];
         Array.Fill(codes, -1);
         var stdoutEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stderrEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var channel = Channel.CreateUnbounded<(int Idx, string Line)>(new UnboundedChannelOptions { SingleReader = true });
+        var channel = Channel.CreateUnbounded<(int Idx, bool IsStderr, string Line)>(new UnboundedChannelOptions { SingleReader = true });
         int current = 0;
         var consumer = Task.Run(async () =>
         {
-            await foreach (var (idx, line) in channel.Reader.ReadAllAsync())
+            await foreach (var (idx, isStderr, line) in channel.Reader.ReadAllAsync())
             {
-                bufs[idx].Append(line);
+                (isStderr ? errBufs[idx] : outBufs[idx]).Append(line);
                 if (onLine is not null)
-                    try { await onLine(idx, new StreamLine(false, line)); } catch { }
+                    try { await onLine(idx, new StreamLine(isStderr, line)); } catch { }
             }
         });
 
         void OnLine(string? data, bool isStderr)
         {
             if (data is null) { (isStderr ? stderrEof : stdoutEof).TrySetResult(); return; }
-            var m = SentinelRegexObj.Match(data);
-            if (m.Success)
+            // BUG-5:sentinel 只在 stdout 检查,stderr 不检查(避免误匹配)
+            if (!isStderr)
             {
-                if (int.TryParse(m.Groups[1].Value, out var i) && i >= 0 && i < codes.Length)
-                    codes[i] = int.TryParse(m.Groups[2].Value, out var c) ? c : -1;
-                current = i + 1;
-                return;
+                var m = SentinelRegexObj.Match(data);
+                if (m.Success)
+                {
+                    if (int.TryParse(m.Groups[1].Value, out var i) && i >= 0 && i < codes.Length)
+                        codes[i] = int.TryParse(m.Groups[2].Value, out var c) ? c : -1;
+                    current = i + 1;
+                    return;
+                }
             }
             var idx = Math.Min(current, specs.Count - 1);
-            channel.Writer.TryWrite((idx, data));
+            channel.Writer.TryWrite((idx, isStderr, data));
         }
         proc.OutputDataReceived += (_, e) => OnLine(e.Data, isStderr: false);
-        proc.ErrorDataReceived += (_, e) => OnLine(e.Data, isStderr: true);   // MergeStreams:stderr 并入当前命令
+        proc.ErrorDataReceived += (_, e) => OnLine(e.Data, isStderr: true);
         proc.BeginOutputRead();
         proc.BeginErrorRead();
 
@@ -156,8 +162,8 @@ public sealed class CommandRunner : ICommandRunner
         sw.Stop();
         return specs.Select((_, i) => new CommandRunResult(
             ExitCode: codes[i] != -1 ? codes[i] : (proc.HasExited ? proc.ExitCode : -1),
-            Stdout: bufs[i].ToString(),
-            Stderr: "",
+            Stdout: outBufs[i].ToString(),
+            Stderr: errBufs[i].ToString(),
             DurationMs: sw.ElapsedMilliseconds,
             TimedOut: timedOut,
             Error: cancelled ? "cancelled" : null)).ToList();

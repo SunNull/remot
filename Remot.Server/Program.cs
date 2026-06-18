@@ -180,7 +180,20 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     var installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Remot");
     Directory.CreateDirectory(installDir);
     var exePath = Path.Combine(installDir, "Remot.Server.exe");
-    File.Copy(Environment.ProcessPath!, exePath, overwrite: true);
+    var oldExe = exePath + ".old";
+    // 清理上次留下的 .old
+    try { if (File.Exists(oldExe)) File.Delete(oldExe); } catch { }
+    // 拷贝:正常(进程已停)直接覆盖;失败(文件被占用)→ 改名旧 exe 再拷
+    try
+    {
+        File.Copy(Environment.ProcessPath!, exePath, overwrite: true);
+    }
+    catch (IOException)
+    {
+        File.Move(exePath, oldExe, overwrite: true);   // Windows 允许重命名运行中的 exe
+        File.Copy(Environment.ProcessPath!, exePath);
+        Console.WriteLine("  (旧 exe 已改名为 .old,下次更新时清理)");
+    }
     Console.WriteLine("  ✓ 已安装");
 
     ServerConfig c;

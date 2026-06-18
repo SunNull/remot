@@ -161,8 +161,24 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
     try
     {
     Console.WriteLine("\n▶ 停止旧服务 ...");
+    // 1. 先拿到服务进程 PID(之后按 PID 杀,不会误杀安装进程自己)
+    int? svcPid = null;
+    try
+    {
+        var pidPsi = new System.Diagnostics.ProcessStartInfo("sc.exe", $"queryex {ServiceInstaller.ServiceName}")
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        var pp = System.Diagnostics.Process.Start(pidPsi);
+        pp?.WaitForExit();
+        var m = System.Text.RegularExpressions.Regex.Match(pp?.StandardOutput.ReadToEnd() ?? "", @"PID\s*:\s*(\d+)");
+        if (m.Success) svcPid = int.Parse(m.Groups[1].Value);
+    }
+    catch { }
+
+    // 2. sc stop(发停止信号)
     try { var psi = new System.Diagnostics.ProcessStartInfo("sc.exe", $"stop {ServiceInstaller.ServiceName}") { UseShellExecute = false, CreateNoWindow = true }; System.Diagnostics.Process.Start(psi)?.WaitForExit(); } catch { }
-    for (int i = 0; i < 30; i++)
+
+    // 3. 轮询等 STOPPED(最多 10 秒;sentinel 已修,正常几秒就停)
+    for (int i = 0; i < 20; i++)
     {
         Thread.Sleep(500);
         try
@@ -176,24 +192,22 @@ static int DoInstall(string[] extra, string cfgPath, bool interactive)
         catch { }
     }
 
+    // 4. 还没停 → 按 PID 杀服务进程(不影响安装进程自己,因为 PID 不同)
+    if (svcPid is not null)
+    {
+        try
+        {
+            var svcProc = System.Diagnostics.Process.GetProcessById(svcPid.Value);
+            if (!svcProc.HasExited) { svcProc.Kill(entireProcessTree: true); Thread.Sleep(1000); }
+        }
+        catch { }   // 已退出或不存在
+    }
+
     Console.WriteLine("▶ 安装到 C:\\Program Files\\Remot ...");
     var installDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Remot");
     Directory.CreateDirectory(installDir);
     var exePath = Path.Combine(installDir, "Remot.Server.exe");
-    var oldExe = exePath + ".old";
-    // 清理上次留下的 .old
-    try { if (File.Exists(oldExe)) File.Delete(oldExe); } catch { }
-    // 拷贝:正常(进程已停)直接覆盖;失败(文件被占用)→ 改名旧 exe 再拷
-    try
-    {
-        File.Copy(Environment.ProcessPath!, exePath, overwrite: true);
-    }
-    catch (IOException)
-    {
-        File.Move(exePath, oldExe, overwrite: true);   // Windows 允许重命名运行中的 exe
-        File.Copy(Environment.ProcessPath!, exePath);
-        Console.WriteLine("  (旧 exe 已改名为 .old,下次更新时清理)");
-    }
+    File.Copy(Environment.ProcessPath!, exePath, overwrite: true);
     Console.WriteLine("  ✓ 已安装");
 
     ServerConfig c;

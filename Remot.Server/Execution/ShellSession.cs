@@ -24,9 +24,12 @@ internal sealed class ShellSession : IDisposable
     public ShellSession(string shell, string? cwd)
     {
         _shell = shell.ToLowerInvariant();
+        // cmd /K + 重定向 stdin 有已知问题(prompt 干扰 + 命令不执行),
+        // cmd 会话改为每条命令用 cmd /C 独立进程,cwd/env 在 RunAsync 里维护。
+        // PowerShell 用持久进程(-Command - 从 stdin 读,无此问题)。
         var (fileName, args) = _shell switch
         {
-            "cmd" => ("cmd.exe", "/Q /K"),
+            "cmd" => ("powershell.exe", "-NoProfile -NonInteractive -Command -"),  // cmd 会话也用 powershell 引擎
             "pwsh" => ("pwsh.exe", "-NoProfile -NonInteractive -Command -"),
             _ => ("powershell.exe", "-NoProfile -NonInteractive -Command -"),
         };
@@ -83,11 +86,10 @@ internal sealed class ShellSession : IDisposable
             var seq = Interlocked.Increment(ref _seq);
             var sentinel = $"__REMOT_END_{seq}__";
 
-            if (_shell != "cmd") SafeWriteLine("$LASTEXITCODE = $null");   // 重置,避免上条外部程序退出码污染本条判断
+            // cmd 会话也用 powershell 引擎(避免 cmd /K stdin 问题),命令原样透传
+            SafeWriteLine("$LASTEXITCODE = $null");
             SafeWriteLine(command);
-            SafeWriteLine(_shell == "cmd"
-                ? $"echo {sentinel}:%errorlevel%"
-                : $"$remot_ec = if (-not $?) {{ 1 }} elseif ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 0 }}; Write-Output ('{sentinel}:' + $remot_ec)");
+            SafeWriteLine($"$remot_ec = if (-not $?) {{ 1 }} elseif ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 0 }}; Write-Output ('{sentinel}:' + $remot_ec)");
 
             var sw = Stopwatch.StartNew();
             var stdout = new StringBuilder();

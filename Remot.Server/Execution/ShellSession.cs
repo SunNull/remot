@@ -86,7 +86,7 @@ internal sealed class ShellSession : IDisposable
             if (_shell != "cmd") SafeWriteLine("$LASTEXITCODE = $null");   // 重置,避免上条外部程序退出码污染本条判断
             SafeWriteLine(command);
             SafeWriteLine(_shell == "cmd"
-                ? $"echo {sentinel}%errorlevel%"
+                ? $"echo {sentinel}:%errorlevel%"
                 : $"$remot_ec = if (-not $?) {{ 1 }} elseif ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} else {{ 0 }}; Write-Output ('{sentinel}:' + $remot_ec)");
 
             var sw = Stopwatch.StartNew();

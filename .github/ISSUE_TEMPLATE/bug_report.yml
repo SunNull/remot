@@ -1,0 +1,90 @@
+name: Bug Report
+description: Report a bug in remot
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill in as much detail as possible —
+        the more context you give, the faster I (or the bot) can reproduce and fix it.
+  - type: input
+    id: version
+    attributes:
+      label: remot version
+      description: 'Run `remot --version` or paste the Release tag (e.g. v0.1.0).'
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: 'Windows 10 / Windows 11 / Windows Server 2022 — include the build number if you know it.'
+      placeholder: Windows 11 23H2
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of remot is affected?
+      multiple: true
+      options:
+        - Remot.Server (gRPC server)
+        - Remot.Client (CLI)
+        - Remot.Mcp (MCP integration)
+        - Remot.Protocol (protobuf / wire)
+        - TLS / certificate
+        - Installer / setup
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug — what you expected to happen, and what actually happened.
+      placeholder: |
+        1. Start remot server with `remot serve --port 50051`
+        2. Run client command `remot exec ...`
+        3. Expected: ...
+        4. Actual: error / crash / hang / wrong output
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & error output
+      description: Paste any error messages, stack traces, or server/client logs. Use ```code blocks``` for formatting.
+      render: text
+      placeholder: |
+        ```
+        error: gRPC status 14 — Unavailable
+        ...
+        ```
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        The smallest set of steps/config that triggers the bug every time.
+        If you can provide a PowerShell script or config snippet, even better.
+      placeholder: |
+        ```powershell
+        # Start server
+        .\Remot.Server.exe serve --port 50051
+        # In another terminal
+        .\Remot.Client.exe exec --command "whoami"
+        ```
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I am using the latest release
+          required: true
+        - label: I have included server logs (if applicable)
+          required: false

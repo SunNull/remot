@@ -22,14 +22,14 @@ public sealed class SessionTool
         return r.Ok ? $"✓ session 已打开:{r.Value}\n用 remot_run_in_session 执行命令,完成后 remot_close_session 关闭。" : $"ERROR: {r.Error}";
     }
 
-    [McpServerTool, Description("在持久会话里执行一条命令(保持之前的 cwd/env)")]
+    [McpServerTool, Description("在持久会话里执行一条命令(保持之前的 cwd/env)。默认超时 30 秒")]
     public async Task<string> remot_run_in_session(
         [Description("目标名")] string target,
         [Description("OpenSession 返回的 session_id")] string session_id,
         [Description("命令")] string command,
-        [Description("超时毫秒,可选")] int? timeout_ms = null)
+        [Description("超时毫秒,可选(默认 30000)")] int? timeout_ms = null)
     {
-        var r = await _client.RunInSessionAsync(target, session_id, command, timeout_ms);
+        var r = await _client.RunInSessionAsync(target, session_id, command, timeout_ms ?? 30000);
         if (!r.Ok) return $"ERROR: {r.Error}";
         return string.Join("\n", r.Value!.Select(x =>
             $"exit={x.ExitCode}{(x.TimedOut ? " TIMEOUT" : "")}\n{x.Stdout}\n--- stderr ---\n{x.Stderr}"));
